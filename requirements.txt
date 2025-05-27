@@ -1,0 +1,5 @@
+litellm
+tqdm
+datasets
+python_dotenv
+git+https://github.com/threewisemonkeys-as/athils.git
