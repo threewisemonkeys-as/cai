@@ -47,8 +47,6 @@ output_path = "data/swesmith/db_amenable_wo_fix_o3.jsonl"
 
 data = JsonLinesFile.read_from(input_path)
 
-selection_results = []
-
 for idx, d in tqdm(enumerate(data), desc="Processing instances", total=len(data) if K is None else K):
 
     if K is not None and idx >= K:
@@ -86,4 +84,4 @@ for idx, d in tqdm(enumerate(data), desc="Processing instances", total=len(data)
         "selection_answer": answer,
     }
 
-    JsonLinesFile.add_to(output_path, selection_results)
+    JsonLinesFile.add_to(output_path, result)
