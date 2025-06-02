@@ -7,10 +7,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-K = None
-USE_FIX = False
-MODEL = "azure/o3_2025-04-16"
-
 SELECTION_PROMPT = r"""You are given information about a bug report filed in a github repository.
 Your task is to decide whether using the python debugger (pdb) is necesary in order to diagnose and resolve the issue.
 
@@ -41,47 +37,56 @@ Given this information about this bug, would it have been posibble to diagnose a
 At the end of your answer, include answer=yes if you think pdb is necessary or answer=no if you think pdb is not necessary to diagnose and resolve this task.
 """
 
+def choose(
+    input_path: str,
+    output_path: str,
+    model: str = "azure/o3_2025-04-16",
+    use_fix: bool = False,
+    k: int | None = None,
+):
 
-input_path = "data/swesmith/subset.jsonl"
-output_path = "data/swesmith/db_amenable_wo_fix_o3.jsonl"
+    data = JsonLinesFile.read_from(input_path)
 
-data = JsonLinesFile.read_from(input_path)
+    for idx, d in tqdm(enumerate(data), desc="Processing instances", total=len(data) if k is None else k):
 
-for idx, d in tqdm(enumerate(data), desc="Processing instances", total=len(data) if K is None else K):
-
-    if K is not None and idx >= K:
-        break
+        if k is not None and idx >= k:
+            break
 
 
-    if USE_FIX:
-        prompt = SELECTION_PROMPT.format(
-            problem_statement=d['problem_statement'],
-            fix=d['patch'],
+        if use_fix:
+            prompt = SELECTION_PROMPT.format(
+                problem_statement=d['problem_statement'],
+                fix=d['patch'],
+            )
+        else:
+            prompt = SELECTION_PROMPT_WITHOUT_FIX.format(
+                problem_statement=d['problem_statement'],
+            )
+
+        response = litellm.completion(
+            model = model,
+            messages = [{"role": "user", "content": prompt}],
         )
-    else:
-        prompt = SELECTION_PROMPT_WITHOUT_FIX.format(
-            problem_statement=d['problem_statement'],
-        )
 
-    response = litellm.completion(
-        model = MODEL,
-        messages = [{"role": "user", "content": prompt}],
-    )
+        response_text = response.choices[0].message.content
 
-    response_text = response.choices[0].message.content
+        response_clean = ''.join(response_text.lower().split())
+        answer = None
+        if "answer=yes" in response_clean:
+            answer = True
+        elif "answer=no" in response_clean:
+            answer = False
 
-    response_clean = ''.join(response_text.lower().split())
-    answer = None
-    if "answer=yes" in response_clean:
-        answer = True
-    elif "answer=no" in response_clean:
-        answer = False
+        result = {
+            "instance_id": d['instance_id'],
+            "problem_statement": d['problem_statement'],
+            "selection_response": response_text,
+            "selection_answer": answer,
+        }
 
-    result = {
-        "instance_id": d['instance_id'],
-        "problem_statement": d['problem_statement'],
-        "selection_response": response_text,
-        "selection_answer": answer,
-    }
+        JsonLinesFile.add_to(output_path, result)
 
-    JsonLinesFile.add_to(output_path, result)
+
+if __name__ == '__main__':
+    import fire
+    fire.Fire(choose)
