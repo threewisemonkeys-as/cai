@@ -3,7 +3,7 @@ from pathlib import Path
 import logging
 from collections import defaultdict
 
-def analyse(
+def analyse_with_agent(
     traj_dir: Path | str,
     agent_dir: Path | str,
 ):
@@ -51,9 +51,47 @@ def analyse(
         print(f'\n\n{instance_id}\n{tool_counter}')
 
 
+def analyse_correct(
+    traj_dir: Path | str,
+):
+
+    correct = 0
+    for patch_path in Path(traj_dir).rglob("*.patch"):
+        traj_path = patch_path.parent / f"{patch_path.stem}.traj"
+        if not traj_path.exists():
+            logging.warning(f"Could not find trajectory at: {traj_path}")
+            continue
+
+        if traj_path.read_text().strip() == "":
+            logging.warning(f"Empty trajectory file at: {traj_path}")
+        
+        traj = json.load(open(traj_path, "r"))
+
+        if "trajectory" not in traj:
+            logging.warning(f"Could not find trajectory inside: {traj_path}")
+        
+        traj_data = traj["trajectory"]
+        last_action = traj_data[-1]
+        if last_action["response"].startswith("Exit due to"):
+            # logging.info(f"Skipping {traj_path}")
+            continue
+
+
+        logging.info(f"Found {traj_path}")
+        correct += 1
+
+
+    print(f"{correct=}")
+
+
         
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+
     import fire
-    fire.Fire(analyse)
+    fire.Fire({
+        "analyse_with_agent": analyse_with_agent,
+        "analyse_correct": analyse_correct,
+    })
