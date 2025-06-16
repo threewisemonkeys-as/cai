@@ -89,7 +89,7 @@ def main(
     failed_processes = 0
     
     # Initialize all images with attempt count 1
-    current_batch = [(image_name, 1) for image_name in images_names]
+    current_batch = [(f"{DOCKER_ORG}/{image_name}:{TAG}", 1) for image_name in images_names]
     
     logger.info(f"Processing batch of {len(current_batch)} images...")
     
