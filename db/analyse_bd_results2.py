@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from collections import defaultdict
 
-def analyse(
+def analyse_matching(
     correct: Path | str,
     log_dir: Path | str,    
 ):
@@ -34,7 +34,28 @@ def analyse(
         print(f"{bt}\t\t\t{bug_type_counts[bt]}\t{all_bug_types_count[bt]}\t{btr:.4f}")
 
 
+def analyse(
+    log_dir: Path | str,
+):
+    status = {}
+    for log_file in Path(log_dir).rglob("*debug_gym.jsonl"):
+        data = json.load(open(log_file, "r"))
+        status[data['problem']] = {
+            'success': data['success'],
+            'pdb_count': sum(d['action']['name'] == 'pdb' if d['action'] is not None else 0 for d in data['log']),
+            'traj_len': len(data['log']),
+        }
+    
+    correct_count = sum(s['success'] == True for s in status.values())
+    print(f"Correct: {correct_count} / {len(status)} = {correct_count / len(status):.4f}")
+
+    print(f"Avg traj length: {sum(d['traj_len'] for d in status.values()) / len(status):.2f}")
+    print(f"Avg pdb usage: {sum(d['pdb_count'] for d in status.values()) / len(status):.2f}")
+
 
 if __name__ == '__main__':
     import fire
-    fire.Fire(analyse)
+    fire.Fire(dict(
+        matching=analyse_matching,
+        analyse=analyse,
+    ))
