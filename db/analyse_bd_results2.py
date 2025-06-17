@@ -53,9 +53,28 @@ def analyse(
     print(f"Avg pdb usage: {sum(d['pdb_count'] for d in status.values()) / len(status):.2f}")
 
 
+
+def analyse_detail(
+    log_dir: Path | str,
+):
+    status = {}
+    for log_file in Path(log_dir).rglob("*debug_gym.jsonl"):
+        data = json.load(open(log_file, "r"))
+        pdb_count = sum(d['action']['name'] == 'pdb' if d['action'] is not None else 0 for d in data['log'])
+        status[data['problem']] = {
+            'success': data['success'],
+            'pdb_count': pdb_count,
+            'traj_len': len(data['log']),
+        }
+        
+        if pdb_count > 0 and data['success']:
+            print(log_file, pdb_count)
+
+
 if __name__ == '__main__':
     import fire
     fire.Fire(dict(
         matching=analyse_matching,
         analyse=analyse,
+        detail=analyse_detail,
     ))
