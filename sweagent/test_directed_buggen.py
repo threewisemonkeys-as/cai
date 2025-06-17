@@ -112,52 +112,58 @@ def process_single_job(
         image_output_dir.mkdir(exist_ok=True, parents=True)
 
         pre_existing_patches = list(image_output_dir.rglob("*.patch"))
-        if len(pre_existing_patches) == 0:
+        if len(pre_existing_patches) > 0:
+            for patch_file in pre_existing_patches:
+                traj_files = list(patch_file.parent.glob("*.traj"))
+                if traj_files:
+                    traj_data = json.load(open(traj_files[0], "r"))
+                    # Check for a valid trajectory file indicating success
+                    if "info" in traj_data and "exit_status" in traj_data["info"] and traj_data["info"]["exit_status"] != "submitted (exit_cost)":
+                        logger.info(f"Image {image_name} was already successfully processed. Skipping.")
+                        return (image_name, True, None)
+
+        _image_name, _tag = image_name.split(":")
+        _, arch, repo_name, short_commit_sha = _image_name.split('.')
+        
+        repo = repo_name.replace('__', '/')
+        full_commit_sha = get_full_commit_id(repo, short_commit_sha)
+        if full_commit_sha is None:
+            error_msg = f"Could not get full commit sha for {image_name}"
+            logger.warning(error_msg)
+            return (image_name, False, error_msg)
+            
+        
+        # Build sweagent arguments
+        url = f"https://github.com/{repo}"
+        config_file = BUGGEN_CONFIG_FILE
+        args = ["run"]
+        
+        if config_file is not None: 
+            args.extend([f"--config", str(config_file)])
+
+        docker_image_name = image_name.replace('__', '_1776_')
+            
+        args += [
+            f"--agent.model.name={model_name}",
+            f"--agent.model.per_instance_cost_limit={COST_LIM}",
+            f"--env.repo.github_url={url}",
+            f"--env.repo.base_commit={full_commit_sha}",
+            f"--env.deployment.image={docker_image_name}",
+            f"--output_dir={str(image_output_dir)}",
+        ]
+        
+        if api_key is not None:
+            args.append(f"--agent.model.api_key={api_key}")
             
 
-            _image_name, _tag = image_name.split(":")
-            _, arch, repo_name, short_commit_sha = _image_name.split('.')
-            
-            repo = repo_name.replace('__', '/')
-            full_commit_sha = get_full_commit_id(repo, short_commit_sha)
-            if full_commit_sha is None:
-                error_msg = f"Could not get full commit sha for {image_name}"
-                logger.warning(error_msg)
-                return (image_name, False, error_msg)
-                
-            
-            # Build sweagent arguments
-            url = f"https://github.com/{repo}"
-            config_file = BUGGEN_CONFIG_FILE
-            args = ["run"]
-            
-            if config_file is not None: 
-                args.extend([f"--config", str(config_file)])
-                
-            args += [
-                f"--agent.model.name={model_name}",
-                f"--agent.model.per_instance_cost_limit={COST_LIM}",
-                f"--env.repo.github_url={url}",
-                f"--env.repo.base_commit={full_commit_sha}",
-                f"--env.deployment.image={image_name}",
-                f"--output_dir={str(image_output_dir)}",
-            ]
-            
-            if api_key is not None:
-                args.append(f"--agent.model.api_key={api_key}")
-                
+        # Execute sweagent
+        config = BasicCLI(RunSingleConfig).get_config(args[1:])
+        config.problem_statement = TextProblemStatement(text=test_trace_desc)
+        run_single = RunSingle.from_config(config)
+        run_single.agent.model.config.completion_kwargs["azure_ad_token_provider"] = AZURE_AD_TOKEN_PROVIDER
+        run_single.run()
 
-            # Execute sweagent
-            config = BasicCLI(RunSingleConfig).get_config(args[1:])
-            config.problem_statement = TextProblemStatement(text=test_trace_desc)
-            run_single = RunSingle.from_config(config)
-            run_single.agent.model.config.completion_kwargs["azure_ad_token_provider"] = AZURE_AD_TOKEN_PROVIDER
-            run_single.run()
-
-            logger.info(f"Completed processing for image: {image_name}")
-
-        else:
-            logger.info(f"Pre-existing patch found for image {image_name}")
+        logger.info(f"Completed processing for image: {image_name}")
 
         current_patches = list(image_output_dir.rglob("*.patch"))
         for patch_file in current_patches:

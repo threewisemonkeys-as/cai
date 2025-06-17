@@ -19,6 +19,7 @@ agent:
       {{ problem_statement }}
       </execution_trace>
 
+      Use the information in the execution trace to indentify points where the disired style of bugs can be introduced.
       Some kinds of bugs you might introduce include:
       - Create data flow bugs through deep object mutation: Modify nested data structures (like dictionaries within lists within objects) where the mutation path is long and the effect appears far from the cause.
       - Implement context-dependent behavior with global state pollution: Use global variables or class-level state that gets modified as a side effect, causing functions to behave differently depending on previous execution history.
@@ -41,7 +42,7 @@ agent:
 
       Follow these steps to introduce the bug:
       1. As a first step, it might be a good idea to go over the general structure of the repository.
-      2. Decide where and what kind of bug you want to introduce.
+      2. Decide where and what kind of bug you want to introduce. Use the trace to identify potential areas where the bug can be introduced. Look for complex interactions, shared state, or deep object structures that can be mutated in a way that causes unexpected behavior.
       3. Plan out how you might need to make changes to introduce this bug.
       4. Make the changes by editing the relevant parts of the codebase.
       5. Make sure that after editing the code to introduce the bug, at least one pre-existing test fails.
