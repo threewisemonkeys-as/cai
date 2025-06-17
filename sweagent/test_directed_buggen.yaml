@@ -1,0 +1,80 @@
+# This template is heavily inspired by anthropic's computer use demo
+agent:
+  templates:
+    system_template: |-
+      You are a helpful assistant that can interact with a computer to solve tasks.
+    instance_template: |-
+      <uploaded_files>
+      {{working_dir}}
+      </uploaded_files>
+      I've uploaded a python code repository in the directory {{working_dir}}.
+      Your job is to to introduce subtle runtime bugs that cannot be reliably detected through code reading alone and require debugging tools to diagnose.  
+      The bug you introduce must cause an existing test to fail but should require runtime debugging tools (like pdb, breakpoints, or state inspection) to diagnose. 
+      It should NOT be detectable through careful code reading or looking at the stacktrace of the failing test alone. 
+      Focus on runtime state issues, reference sharing, timing dependencies, or complex execution flows that only become apparent during execution.
+
+      To aid in this task, I have provided a runtime execution trace of a specific test below - 
+
+      <execution_trace>
+      {{ problem_statement }}
+      </execution_trace>
+
+      Some kinds of bugs you might introduce include:
+      - Create data flow bugs through deep object mutation: Modify nested data structures (like dictionaries within lists within objects) where the mutation path is long and the effect appears far from the cause.
+      - Implement context-dependent behavior with global state pollution: Use global variables or class-level state that gets modified as a side effect, causing functions to behave differently depending on previous execution history.
+      - Implement recursive functions with shared mutable state: Use mutable default arguments or class-level variables in recursive functions that accumulate state across different call trees, causing interference between separate recursive operations.
+      - Create shared reference issues with mutable objects: Use the same mutable object reference across multiple operations without proper copying, causing modifications in one context to unexpectedly affect another (e.g., sharing lists or dictionaries between instances). 
+      - Introduce accidental state mutations in nested calls: Modify object state unexpectedly deep within a chain of method calls, where the mutation appears unrelated to the method's stated purpose (e.g., a validation method that accidentally modifies the object being validated.
+
+      Tips for introducing the bug:
+      - It should not cause compilation errors.
+      - It should not be a syntax error.
+      - It should not modify the documentation significantly.
+      - It should cause a pre-exisiting test to fail. But the bug should not be easy to diagnose just by looking at the stacktrace of the failing test.
+      - The root cause should be separated from the symptom manifestation - where the bug occurs should be different from where the error appears.
+      - The bug maybe a result of edits to multiple function/files which interact in complex ways.
+      - The bug should require runtime inspection such as stepping through execution with a debugger to trace the actual cause - it cannot be reliably detected through static code analysis alone.
+      - For functions with complex state or multiple objects, introduce bugs that span multiple method calls or object interactions.
+      - Focus on bugs that involve shared state, reference aliasing, or side effects that are not immediately obvious but is only visible during execution.
+      - The bug should require tools like pdb, debugger breakpoints, or runtime state inspection to diagnose effectively.
+      - Please DO NOT INCLUDE COMMENTS IN THE CODE indicating the bug location or the bug itself.
+
+      Follow these steps to introduce the bug:
+      1. As a first step, it might be a good idea to go over the general structure of the repository.
+      2. Decide where and what kind of bug you want to introduce.
+      3. Plan out how you might need to make changes to introduce this bug.
+      4. Make the changes by editing the relevant parts of the codebase.
+      5. Make sure that after editing the code to introduce the bug, at least one pre-existing test fails.
+      6. Make sure that the bug you have introduced cannot be deteced by looking at the code or the stacktrace alone, and it need the use of debugging tools to diagnose.
+      7. Do not include any comments in the code or point out the bug in any way.
+      Your thinking should be thorough and so it's fine if it's very long.
+    next_step_template: |-
+      OBSERVATION:
+      {{observation}}
+    next_step_no_output_template: |-
+      Your command ran successfully and did not produce any output.
+  tools:
+    bundles:
+      - path: tools/registry
+      - path: tools/edit_anthropic
+      - path: tools/review_on_submit_m
+    registry_variables:
+      USE_FILEMAP: 'true'
+      SUBMIT_REVIEW_MESSAGES:
+        - |
+          Thank you for your work on this issue. Please carefully follow the steps below to help review your changes.
+
+          1. Make sure you havent introduced any comments in the code that indicate the location of the bug or the bug itself.
+          2. Make sure that the introduced bug causes at least one test to fail.
+          3. If you have modified any TEST files, please revert them to the state they had before you started instroducing the bug.
+            You can do this with `git checkout -- /path/to/test/file.py`. Use below <diff> to find the files you need to revert.
+          4. Run the submit command again to confirm.
+
+          Here is a list of all of your changes:
+
+          <diff>
+          {{diff}}
+          </diff>
+    enable_bash_tool: true
+    parse_function:
+      type: function_calling

@@ -139,52 +139,51 @@ def analyse(data_path: Path | str, output_file: Optional[str] = None, threshold:
     
     all_repo_stats = {}
     
-    for entry in data:
-        for repo, repo_data in entry.items():
-            lengths, ep_founds, post_ep_lens, post_ep_unique = [], [], [], []
+    for repo, repo_data in data:
+        lengths, ep_founds, post_ep_lens, post_ep_unique = [], [], [], []
+        
+        for test, test_data in repo_data:
+            test_trace = test_data['trace_data']
+            lengths.append(len(test_trace))
             
-            for test, test_data in repo_data:
-                test_trace = test_data['trace_data']
-                lengths.append(len(test_trace))
+            ep_found = False
+            try:
+                snipped_trace = snip_trace(test_trace, test)
+                ep_found = True
+                post_ep_len = len(snipped_trace)
+                post_ep_unique_count = len(set([(e['location'], e['name']) for e in snipped_trace]))
                 
-                ep_found = False
-                try:
-                    snipped_trace = snip_trace(test_trace, test)
-                    ep_found = True
-                    post_ep_len = len(snipped_trace)
-                    post_ep_unique_count = len(set([(e['location'], e['name']) for e in snipped_trace]))
-                    
-                    post_ep_lens.append(post_ep_len)
-                    post_ep_unique.append(post_ep_unique_count)
-                except Exception as e:
-                    logging.warning(f"Could not find entrypoint {test} in trace (repo: {repo})")
-                
-                ep_founds.append(ep_found)
+                post_ep_lens.append(post_ep_len)
+                post_ep_unique.append(post_ep_unique_count)
+            except Exception as e:
+                logging.warning(f"Could not find entrypoint {test} in trace (repo: {repo})")
             
-            # Calculate threshold-based metrics if threshold is provided
-            above_threshold_count = 0
-            total_with_entrypoint = len(post_ep_unique)  # Only traces where entrypoint was found
-            
-            if threshold is not None:
-                above_threshold_count = sum(1 for count in post_ep_unique if count > threshold)
-            
-            # Calculate statistics for this repo
-            repo_stats = {
-                'num_points': len(lengths),
-                'ep_found_rate': calculate_rate(ep_founds),
-                'lengths': calculate_stats(lengths),
-                'post_ep_lens': calculate_stats(post_ep_lens),
-                'post_ep_unique': calculate_stats(post_ep_unique),
-                'above_threshold_count': above_threshold_count,
-                'total_with_entrypoint': total_with_entrypoint,
-                # Keep raw data for summary calculations
-                'raw_lengths': lengths,
-                'raw_post_ep_lens': post_ep_lens,
-                'raw_post_ep_unique': post_ep_unique,
-            }
-            
-            all_repo_stats[repo] = repo_stats
-    
+            ep_founds.append(ep_found)
+        
+        # Calculate threshold-based metrics if threshold is provided
+        above_threshold_count = 0
+        total_with_entrypoint = len(post_ep_unique)  # Only traces where entrypoint was found
+        
+        if threshold is not None:
+            above_threshold_count = sum(1 for count in post_ep_unique if count >= threshold)
+        
+        # Calculate statistics for this repo
+        repo_stats = {
+            'num_points': len(lengths),
+            'ep_found_rate': calculate_rate(ep_founds),
+            'lengths': calculate_stats(lengths),
+            'post_ep_lens': calculate_stats(post_ep_lens),
+            'post_ep_unique': calculate_stats(post_ep_unique),
+            'above_threshold_count': above_threshold_count,
+            'total_with_entrypoint': total_with_entrypoint,
+            # Keep raw data for summary calculations
+            'raw_lengths': lengths,
+            'raw_post_ep_lens': post_ep_lens,
+            'raw_post_ep_unique': post_ep_unique,
+        }
+        
+        all_repo_stats[repo] = repo_stats
+
     # Generate output
     output_lines = []
     
@@ -213,8 +212,38 @@ def analyse(data_path: Path | str, output_file: Optional[str] = None, threshold:
         print("\nTip: Use --threshold=N to count traces with >N unique calls")
 
 
+def choose_above_threshold(data_path: Path | str, output_file: str, threshold: int):
+    data = JsonLinesFile.read_from(data_path)
+    
+    results = []
+    
+    for repo, repo_data in data:
+        repo_results = []
+
+        for test, test_data in repo_data:
+            test_trace = test_data['trace_data']
+            
+            try:
+                snipped_trace = snip_trace(test_trace, test)
+                post_ep_unique_count = len(set([(e['location'], e['name']) for e in snipped_trace]))
+                
+                if post_ep_unique_count >= threshold:
+                    repo_results.append((test, test_data))
+
+            except Exception as e:
+                logging.warning(f"Could not find entrypoint {test} in trace (repo: {repo})")
+
+        results.append((repo, repo_results))
+    
+    results = [(repo, repo_results) for (repo, repo_results) in results if len(repo_results) > 0]
+
+    JsonLinesFile.write_to(output_file, results)
+    print(f"Wrote {sum(len(d) for _, d in results)} total traces to {output_file}")
+
+
 if __name__ == '__main__':
     import fire
     fire.Fire({
-        "analyse": analyse
+        "analyse": analyse,
+        "choose": choose_above_threshold,
     })

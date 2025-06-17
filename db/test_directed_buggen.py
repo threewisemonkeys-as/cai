@@ -28,10 +28,10 @@ def get_test_traces(
 
     try:
 
-        repo_url = f"https://github.com/swesmith/{image_name.split('swesmith.x86_64.')[1]}"
+        repo_url = f"https://github.com/swesmith/{image_name.split('swesmith.x86_64.')[1].split(':')[0]}"
         repo_config = GithubRepoConfig(github_url=repo_url)
         env = SWEEnv(
-            deployment=DockerDeployment(image=image_name),
+            deployment=DockerDeployment(image=image_name, startup_timeout=600),
             repo=repo_config,
             post_startup_commands=["pip install git+https://github.com/pclucas14/execution-tracing.git"],
         )
@@ -44,10 +44,19 @@ def get_test_traces(
 
         ok_tests = []
         for test in tests:
-            trace_output = env.communicate(f"trace_pytest --no-external-calls {test}")
-            trace = json.loads(env.read_file(f"{cwd}/pytest_trace_output.json"))
+            try:
+                trace_output = env.communicate(f"trace_pytest --no-external-calls {test}", timeout=300)
+            except Exception as e:
+                logger.warning(f"Ran into error while tracing test: {test} -\n{e}")
+                continue
 
-            if len(trace['trace_data']) > 500:
+            try:
+                trace = json.loads(env.read_file(f"{cwd}/pytest_trace_output.json"))
+            except Exception as e:
+                logger.warning(f"Ran into error while reading trace for test: {test} -\n{e}")
+                continue
+
+            if "trace_data" not in trace or len(trace['trace_data']) > 500:
                 continue
 
             ok_tests.append((test, trace))
