@@ -47,82 +47,97 @@ def process_single_image(
 ) -> Tuple[str, bool, Optional[str]]:
     """
     Process a single Docker image.
-    
+
     Returns:
         Tuple of (image_name, success, error_message)
     """
     try:
         logger.info(f"Starting processing for image: {image_name}")
         
-        # Create output directory for this image
         image_output_dir = output_dir / image_name
         image_output_dir.mkdir(exist_ok=True, parents=True)
 
+        # Step 1: Check for a pre-existing SUCCESSFUL patch to avoid re-work.
         pre_existing_patches = list(image_output_dir.rglob("*.patch"))
-        if len(pre_existing_patches) == 0:
+        if len(pre_existing_patches) > 0:
+            for patch_file in pre_existing_patches:
+                traj_files = list(patch_file.parent.glob("*.traj"))
+                if traj_files:
+                    traj_data = json.load(open(traj_files[0], "r"))
+                    # Check for a valid trajectory file indicating success
+                    if "info" in traj_data and "exit_status" in traj_data["info"] and traj_data["info"]["exit_status"] != "submitted (exit_cost)":
+                        logger.info(f"Image {image_name} was already successfully processed. Skipping.")
+                        return (image_name, True, None)
             
-            _, arch, repo_name, short_commit_sha = image_name.split('.')
+            logger.info(f"Found patches from previous failed attempts for {image_name}. Starting new attempt.")
+        
+        # Step 2: If we're here, no successful run exists. Execute a new attempt.
+        _, arch, repo_name, short_commit_sha = image_name.split('.')
+        
+        repo = repo_name.replace('__', '/')
+        full_commit_sha = get_full_commit_id(repo, short_commit_sha)
+        if full_commit_sha is None:
+            error_msg = f"Could not get full commit sha for {image_name}"
+            logger.warning(error_msg)
+            return (image_name, False, error_msg)
             
-            repo = repo_name.replace('__', '/')
-            full_commit_sha = get_full_commit_id(repo, short_commit_sha)
-            if full_commit_sha is None:
-                error_msg = f"Could not get full commit sha for {image_name}"
-                logger.warning(error_msg)
-                return (image_name, False, error_msg)
-                
+        
+        # Build sweagent arguments
+        url = f"https://github.com/{repo}"
+        config_file = BUGGEN_CONFIG_FILE
+        args = ["run"]
+        
+        if config_file is not None: 
+            args.extend([f"--config", str(config_file)])
             
-            # Build sweagent arguments
-            url = f"https://github.com/{repo}"
-            config_file = BUGGEN_CONFIG_FILE
-            args = ["run"]
+        args += [
+            f"--agent.model.name={model_name}",
+            f"--agent.model.per_instance_cost_limit={COST_LIM}",
+            f"--env.repo.github_url={url}",
+            f"--env.repo.base_commit={full_commit_sha}",
+            f"--env.deployment.image={image_name}",
+            f"--output_dir={str(image_output_dir)}",
+        ]
+        
+        if api_key is not None:
+            args.append(f"--agent.model.api_key={api_key}")
             
-            if config_file is not None: 
-                args.extend([f"--config", str(config_file)])
-                
-            args += [
-                f"--agent.model.name={model_name}",
-                f"--agent.model.per_instance_cost_limit={COST_LIM}",
-                f"--env.repo.github_url={url}",
-                f"--env.repo.base_commit={full_commit_sha}",
-                f"--env.deployment.image={image_name}",
-                f"--output_dir={str(image_output_dir)}",
-            ]
-            
-            if api_key is not None:
-                args.append(f"--agent.model.api_key={api_key}")
-                
 
-            # Execute sweagent
-            config = BasicCLI(RunSingleConfig).get_config(args[1:])
-            run_single = RunSingle.from_config(config)
-            run_single.agent.model.config.completion_kwargs["azure_ad_token_provider"] = AZURE_AD_TOKEN_PROVIDER
-            run_single.run()
+        # Execute sweagent
+        config = BasicCLI(RunSingleConfig).get_config(args[1:])
+        run_single = RunSingle.from_config(config)
+        run_single.agent.model.config.completion_kwargs["azure_ad_token_provider"] = AZURE_AD_TOKEN_PROVIDER
+        run_single.run()
 
-            logger.info(f"Completed processing for image: {image_name}")
+        logger.info(f"Agent finished running for image: {image_name}. Verifying results.")
 
-        else:
-            logger.info(f"Pre-existing patch found for image {image_name}")
-
+        # Step 3: Verify the results of the new attempt.
         current_patches = list(image_output_dir.rglob("*.patch"))
+        if not current_patches:
+            logger.warning(f"Run for {image_name} did not produce a patch.")
+            return (image_name, False, "Run did not produce a patch.")
+
         for patch_file in current_patches:
             traj_files = list(patch_file.parent.glob("*.traj"))
             if len(traj_files) > 0:
                 traj_data = json.load(open(traj_files[0], "r"))
                 if "info" in traj_data and "exit_status" in traj_data["info"]:
                     if traj_data["info"]["exit_status"] == "submitted (exit_cost)":
-                        logger.info(f"Processing completed early due to cost limit being reached for image: {image_name}")
-                        continue
+                        logger.info(f"Processing for {image_name} stopped due to cost limit.")
+                        continue  # This patch is a failure, check if other patches were generated
                     else:
-                        return (image_name, True, None)
-            
-            logger.info(f"Malformed trajectory data for image: {image_name}")
-            continue
-            
-        return (image_name, False, None)
-        
+                        logger.info(f"Successfully generated patch for {image_name}.")
+                        return (image_name, True, None)  # Found a successful patch
+            else:
+                logger.warning(f"Found patch for {image_name} but its trajectory file is malformed.")
+                continue # Malformed, check other patches
+
+        # If we finish the loop, no successful patch was found in the new attempt.
+        return (image_name, False, "Attempt failed to produce a valid patch.")
+    
     except Exception as e:
         error_msg = f"Error processing {image_name}: {str(e)}"
-        logger.error(error_msg)
+        logger.error(error_msg, exc_info=True)
         return (image_name, False, error_msg)
 
 
@@ -214,17 +229,17 @@ if __name__ == '__main__':
     
     parser = ArgumentParser(description="Process Docker images in parallel using SweAgent")
     parser.add_argument("-i", "--image_names", type=str, required=True,
-                       help="Path to file containing image names")
+                        help="Path to file containing image names")
     parser.add_argument("-o", "--output_dir", type=str, required=True,
-                       help="Output directory for results")
+                        help="Output directory for results")
     parser.add_argument("-m", "--model_name", type=str, default="azure/o3_2025-04-16",
-                       help="Model name for the agent")
+                        help="Model name for the agent")
     parser.add_argument("-k", "--api_key", type=str, default=None,
-                       help="API key for the model")
+                        help="API key for the model")
     parser.add_argument("-n", "--num_images", type=int, default=None,
-                       help="Number of images to process (limits the input)")
+                        help="Number of images to process (limits the input)")
     parser.add_argument("-w", "--max_workers", type=int, default=4,
-                       help="Maximum number of parallel workers")
+                        help="Maximum number of parallel workers")
     
     args = parser.parse_args()
     
