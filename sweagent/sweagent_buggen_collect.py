@@ -34,7 +34,7 @@ def collect(
             continue
 
         patch = patch_file.read_text()
-        image_name = patch_file.parent.parent.name
+        image_name = patch_file.parent.parent.parent.name.split(':')[0]
         _, _, repo_name, base_commit = image_name.split('.')
         instance_id = f"{repo_name}.{base_commit}.{STRATEGY_NAME}__{str(uuid.uuid4())[:8]}"
 

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Tuple
 import json
 from textwrap import shorten
+import hashlib
 
 from sweagent.run.common import BasicCLI
 from sweagent.run.run_single import RunSingle, RunSingleConfig
@@ -99,7 +100,8 @@ def process_single_job(
     """
     image_name, trace_data = jspec
     test, trace = trace_data
-
+    test_sha = hashlib.sha256("your string here".encode('utf-8')).hexdigest()[:8]
+    image_id = image_name.split('/')[1]
 
     trace_desc = make_trace_desc(trace)
     test_trace_desc = f"Runtime execution trace with for the test: {test} -\nFormat: <function name> @ <location>  args={{<function arguments>}}  ctx: <calling context>\n{trace_desc}"
@@ -108,8 +110,9 @@ def process_single_job(
         logger.info(f"Starting processing for image {image_name} with trace of test {test}")
         
         # Create output directory for this image
-        image_output_dir = output_dir / image_name
+        image_output_dir = output_dir / image_name / test_sha
         image_output_dir.mkdir(exist_ok=True, parents=True)
+        (image_output_dir / "test_name.txt").write_text(test)
 
         pre_existing_patches = list(image_output_dir.rglob("*.patch"))
         if len(pre_existing_patches) > 0:
