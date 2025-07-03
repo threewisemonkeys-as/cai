@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import random
 
+from datasets import load_dataset
+
 from sweagent.environment.swe_env import SWEEnv
 from sweagent.environment.repo import GithubRepoConfig
 from swerex.deployment.docker import DockerDeployment
@@ -14,39 +16,48 @@ from athils import JsonLinesFile
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+
+# TRACER_INSTALL_CMD = "pip install git+https://github.com/pclucas14/execution-tracing.git"
+TRACER_INSTALL_CMD = "pip install git+https://github.com/threewisemonkeys-as/execution-tracing.git@atharv/no_args_logging"
+
+
 def get_test_traces_for_bug(
     bug: dict,
 ) -> tuple[str, str]:
-    logger.info(f"Starting processing for instance: {bug['instance_id']}")
+    instance_id = bug['instance_id']
+    logger.info(f"Starting processing for instance: {instance_id}")
 
     try:
 
-        repo_url = f"https://github.com/swesmith/{bug['image_name'].split('swesmith.x86_64.')[1].split(':')[0]}"
-        repo_config = GithubRepoConfig(github_url=repo_url)
+        image_name = f"swebench/sweb.eval.x86_64.{instance_id.replace('__', '_1776_')}"
+        repo_url = f"https://github.com/{bug['repo']}"
+        repo_config = GithubRepoConfig(github_url=repo_url, base_commit=bug['base_commit'])
         env = SWEEnv(
             deployment=DockerDeployment(
-                image=bug['image_name'],
+                image=image_name,
                 startup_timeout=600
             ),
             repo=repo_config,
-            post_startup_commands=["pip install git+https://github.com/pclucas14/execution-tracing.git"],
+            post_startup_commands=[TRACER_INSTALL_CMD],
         )
         env.start()
 
         tests = bug['FAIL_TO_PASS']
+        if isinstance(tests, str):
+            tests = eval(tests)
 
         cwd = env.communicate("pwd").strip()
 
         results = []
         for test in tests:
             try:
-                trace_output = env.communicate(f"trace_pytest --no-external-calls {test}", timeout=300)
+                trace_output = env.communicate(f"cd /testbed && git checkout {bug['base_commit']} && trace_pytest --no-arg-values --no-external-calls '{test}'", timeout=300)
             except Exception as e:
                 logger.warning(f"Ran into error while tracing test: {test} -\n{e}")
                 continue
 
             try:
-                trace = json.loads(env.read_file(f"{cwd}/pytest_trace_output.json"))
+                trace = json.loads(env.read_file(f"/testbed/pytest_trace_output.json"))
             except Exception as e:
                 logger.warning(f"Ran into error while reading trace for test: {test} -\n{e}")
                 continue
@@ -56,6 +67,7 @@ def get_test_traces_for_bug(
 
             results.append((test, trace))
 
+        env.close()
         return (results, True, None)
     
     except Exception as e:
@@ -66,13 +78,13 @@ def get_test_traces_for_bug(
     
 
 def main(
-    dataset: str | Path,
+    dataset: str,
     output_path: str | Path,
     max_workers: int = 1,
+    split: str = "test",
 ):
 
-    data = json.load(open(dataset, "r"))
-    data = data
+    data = load_dataset(dataset)[split]
     
     output_path = Path(output_path)
     if not output_path.exists():
