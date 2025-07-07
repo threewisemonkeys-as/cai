@@ -12,15 +12,9 @@ agent:
       The bug you introduce must cause an existing test to fail but should require runtime debugging tools (like pdb, breakpoints, or state inspection) to diagnose. 
       It should NOT be detectable through careful code reading or looking at the stacktrace of the failing test alone. 
       Focus on runtime state issues, reference sharing, timing dependencies, or complex execution flows that only become apparent during execution.
+      The bugs must be a result of editing at least two related files in the codebase.
 
-      To aid in this task, I have provided a runtime execution trace of a specific test below - 
-
-      <execution_trace>
-      {{ problem_statement }}
-      </execution_trace>
-
-      Use the information in the execution trace to indentify points where the disired style of bugs can be introduced.
-      Some kinds of bugs you might introduce include:
+      To this end, some kinds of bugs you might introduce include:
       - Create data flow bugs through deep object mutation: Modify nested data structures (like dictionaries within lists within objects) where the mutation path is long and the effect appears far from the cause.
       - Implement context-dependent behavior with global state pollution: Use global variables or class-level state that gets modified as a side effect, causing functions to behave differently depending on previous execution history.
       - Implement recursive functions with shared mutable state: Use mutable default arguments or class-level variables in recursive functions that accumulate state across different call trees, causing interference between separate recursive operations.
@@ -42,12 +36,13 @@ agent:
 
       Follow these steps to introduce the bug:
       1. As a first step, it might be a good idea to go over the general structure of the repository.
-      2. Decide where and what kind of bug you want to introduce. Use the trace to identify potential areas where the bug can be introduced. Look for complex interactions, shared state, or deep object structures that can be mutated in a way that causes unexpected behavior.
-      3. Plan out how you might need to make changes to introduce this bug.
-      4. Make the changes by editing the relevant parts of the codebase.
-      5. Make sure that after editing the code to introduce the bug, at least one pre-existing test fails.
-      6. Make sure that the bug you have introduced cannot be deteced by looking at the code or the stacktrace alone, and it need the use of debugging tools to diagnose.
-      7. Do not include any comments in the code or point out the bug in any way.
+      2. Decide where and what kind of bug you want to introduce.
+      3. Ensure the the bugs will be a result of editing at least two related files in the codebase.
+      4. Plan out how you might need to make changes to introduce this bug.
+      5. Make the changes by editing the relevant parts of the codebase.
+      6. Make sure that after editing the code to introduce the bug, at least one pre-existing test fails.
+      7. Make sure that the bug you have introduced cannot be detected by looking at the code or the stacktrace alone, and it needs the use of debugging tools to diagnose.
+      8. Do not include any comments in the code or point out the bug in any way.
       Your thinking should be thorough and so it's fine if it's very long.
     next_step_template: |-
       OBSERVATION:
@@ -65,11 +60,12 @@ agent:
         - |
           Thank you for your work on this issue. Please carefully follow the steps below to help review your changes.
 
-          1. Make sure you havent introduced any comments in the code that indicate the location of the bug or the bug itself.
-          2. Make sure that the introduced bug causes at least one test to fail.
-          3. If you have modified any TEST files, please revert them to the state they had before you started instroducing the bug.
+          1. Make sure you have not introduced any comments in the code that indicate the location of the bug or the bug itself.
+          2. Make sure that the bug is a result of at least two related changes in different files.
+          3. Make sure that the introduced bug causes at least one test to fail.
+          4. If you have modified any TEST files, please revert them to the state they had before you started instroducing the bug.
             You can do this with `git checkout -- /path/to/test/file.py`. Use below <diff> to find the files you need to revert.
-          4. Run the submit command again to confirm.
+          5. Run the submit command again to confirm.
 
           Here is a list of all of your changes:
 

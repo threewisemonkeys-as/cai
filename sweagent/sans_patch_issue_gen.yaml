@@ -5,9 +5,8 @@ system: |-
   You will be given the following input:
 
   1. Demonstration: A realistic GitHub issue to mimic (included in the <demonstration> tag).
-  2. Patch: A git diff output/pull request changes that introduces a bug (included in the <patch> tag).
-  3. Test output: The output of running the tests after the patch is applied (included in the <test_output> tag).
-  4. Test source code: Source code for one or more tests that failed (included in the <test_source_code> tag).
+  2. Test output: The output of running tests which are failing due to some bug (included in the <test_output> tag).
+  3. Test source code: Source code for one or more tests that failed (included in the <test_source_code> tag).
 
   Output: A realistic GitHub issue for the patch.
 
@@ -33,7 +32,7 @@ demonstration: |-
   </demonstration>
   {% endfor %}
 instance: |-
-  Now, write a GitHub issue for the following patch (diff output).
+  Now, write a GitHub issue for the bug demonstrated by the following test output and source code.
 
   <IMPORTANT>
   - DO NOT GIVE AWAY THE FIX! THE SOLUTION CODE SHOULD NEVER APPEAR IN YOUR RESPONSE.
@@ -42,10 +41,6 @@ instance: |-
   - Mimic the style and information of the issue text from the demonstration.
   - Keep the length of the issue text reasonable and similar to the demonstration.
   </IMPORTANT>
-
-  <patch>
-  {{patch}}
-  </patch>
 
   <test_output>
   {{test_output}}
