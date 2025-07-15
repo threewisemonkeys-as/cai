@@ -123,16 +123,16 @@ def process_single_job(
 
         _, arch, repo_name, short_commit_sha = image_name.split('.')
         
-        repo = repo_name.replace('__', '/')
-        full_commit_sha = get_full_commit_id(repo, short_commit_sha)
-        if full_commit_sha is None:
-            error_msg = f"Could not get full commit sha for {image_name}"
-            logger.warning(error_msg)
-            return (image_name, False, error_msg)
+        # repo = repo_name.replace('__', '/')
+        # full_commit_sha = get_full_commit_id(repo, short_commit_sha)
+        # if full_commit_sha is None:
+        #     error_msg = f"Could not get full commit sha for {image_name}"
+        #     logger.warning(error_msg)
+        #     return (image_name, False, error_msg)
             
         
         # Build sweagent arguments
-        url = f"https://github.com/{repo}"
+        url = f"https://github.com/swesmith/{repo_name}.{short_commit_sha}"
         args = ["run"]
         
         if config_file is not None: 
@@ -143,7 +143,6 @@ def process_single_job(
             f"--agent.model.name={model_name}",
             f"--agent.model.per_instance_cost_limit={COST_LIM}",
             f"--env.repo.github_url={url}",
-            f"--env.repo.base_commit={full_commit_sha}",
             f"--env.deployment.image={image_name}",
             f"--output_dir={str(image_output_dir)}",
         ]
@@ -433,16 +432,16 @@ def process_single_trace_directed_job(
 
         _, arch, repo_name, short_commit_sha = image_name.split('.')
         
-        repo = repo_name.replace('__', '/')
-        full_commit_sha = get_full_commit_id(repo, short_commit_sha)
-        if full_commit_sha is None:
-            error_msg = f"Could not get full commit sha for {image_name}"
-            logger.warning(error_msg)
-            return (image_name, False, error_msg)
+        # repo = repo_name.replace('__', '/')
+        # full_commit_sha = get_full_commit_id(repo, short_commit_sha)
+        # if full_commit_sha is None:
+        #     error_msg = f"Could not get full commit sha for {image_name}"
+        #     logger.warning(error_msg)
+        #     return (image_name, False, error_msg)
             
         
         # Build sweagent arguments
-        url = f"https://github.com/{repo}"
+        url = f"https://github.com/swesmith/{repo_name}.{short_commit_sha}"
         args = ["run"]
         
         if config_file is not None: 
@@ -453,7 +452,6 @@ def process_single_trace_directed_job(
             f"--agent.model.name={model_name}",
             f"--agent.model.per_instance_cost_limit={COST_LIM}",
             f"--env.repo.github_url={url}",
-            f"--env.repo.base_commit={full_commit_sha}",
             f"--env.deployment.image={image_name}",
             f"--output_dir={str(image_output_dir)}",
         ]
