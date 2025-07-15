@@ -61,6 +61,7 @@ def get_test_traces_for_bug(
             except Exception as e:
                 logger.warning(f"Ran into error while reading trace for test: {test} -\n{e}")
                 continue
+            breakpoint()
 
             if "trace_data" not in trace:
                 continue
@@ -85,6 +86,7 @@ def main(
 ):
 
     data = load_dataset(dataset)[split]
+    data = [d for d in data if d['instance_id'] in ['astropy__astropy-13453']]
     
     output_path = Path(output_path)
     if not output_path.exists():

@@ -13,7 +13,8 @@ agent:
       First go through the codebase and identify a suitable new feature to add.
       Come up with a plan to implement it and then make the necessary changes to the codebase.
       You can use the tools provided to edit files, run tests, and submit your changes.
-      Make sure that you introduce at least two related changes in the codebase in different files.
+      The feature you introduce should not break any existing functionality.
+      Make sure the edit you make is complex - you should introduce at least two related changes in the codebase in different files.
 
     next_step_template: |-
       OBSERVATION:
@@ -29,7 +30,9 @@ agent:
       USE_FILEMAP: 'true'
       SUBMIT_REVIEW_MESSAGES:
         - |
-          Thank you for your work on this issue. Ensure that you have made at least two related changes in different files.
+          Thank you for your work on this issue. 
+          Ensure that you have not broken any existing functionality.
+          Ensure that you have made at least two related changes in different files.
           Run the submit command again to confirm.
 
           Here is a list of all of your changes:
