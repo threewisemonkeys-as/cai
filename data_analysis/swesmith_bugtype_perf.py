@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import datasets
+
 from rich.table import Table
 from rich.console import Console
 
@@ -186,8 +188,12 @@ def analyse(
 ):
 
     if data_path is not None:
-        data = json.load(open(data_path, "r"))
-        data = {i['instance_id']: i for i in data}
+        if Path(data_path).exists():
+            data = json.load(open(data_path, "r"))
+            data = {i['instance_id']: i for i in data}
+        else:
+            ds = datasets.load_dataset(data_path, split='train')
+            data = {i['instance_id']: i for i in ds}
     else:
         data = None
     
