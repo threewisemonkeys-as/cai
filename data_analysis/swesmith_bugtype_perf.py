@@ -211,17 +211,12 @@ def analyse(
     result_repo_size_map = {True: (0, 0), False: (0, 0)}
     repo_size_data = []
 
-    for subdir in results_dir.iterdir():
+    for result_path in results_dir.rglob("*debug_gym.jsonl"):
+        subdir = result_path.parent
         result_name = subdir.name
         name_parts = result_name.split('.')
         if len(name_parts) not in [3, 4]:
             print(f"Skipping {result_name} due to unexpected format")
-            skipped += 1
-            continue
-
-
-        if not (subdir / "debug_gym.jsonl").exists():
-            print(f"Skipping {result_name} as debug_gym.jsonl does not exist")
             skipped += 1
             continue
 
