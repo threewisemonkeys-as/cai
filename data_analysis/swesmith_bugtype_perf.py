@@ -70,18 +70,30 @@ def plot_success_rate_vs_patch_size(patch_size_data, title_suffix="", filename_s
     bucket_labels = [bucket['label'] for bucket in buckets]
 
     plt.figure(figsize=(12, 6))
-    bars = plt.bar(range(len(bucket_labels)), success_rates, color='steelblue', alpha=0.7)
+    
+    # Calculate midpoints of buckets for x-axis
+    x_positions = [(bucket['min_size'] + bucket['max_size']) / 2 for bucket in buckets]
+    
+    # Create scatter plot
+    scatter = plt.scatter(x_positions, success_rates, 
+                         s=[bucket['total'] * 10 for bucket in buckets],  # Size proportional to sample count
+                         c=success_rates, cmap='RdYlGn', 
+                         alpha=0.7, edgecolors='black', linewidth=0.5)
 
-    plt.xlabel('Patch Size Range (lines changed)')
+    plt.xlabel('Patch Size (lines changed)')
     plt.ylabel('Average Success Rate')
-    plt.title(f'Average Success Rate vs {title_suffix} Patch Size (Percentile-Based Buckets)')
-    plt.xticks(range(len(bucket_labels)), bucket_labels, rotation=45)
+    plt.title(f'Average Success Rate vs {title_suffix} Patch Size')
     plt.ylim(0, 1)
+    
+    # Add colorbar
+    plt.colorbar(scatter, label='Success Rate')
 
-    for i, (bar, bucket) in enumerate(zip(bars, buckets)):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
-                f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
-                ha='center', va='bottom', fontsize=8)
+    # Add annotations for each point
+    for i, bucket in enumerate(buckets):
+        plt.annotate(f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
+                    (x_positions[i], success_rates[i]),
+                    xytext=(5, 5), textcoords='offset points',
+                    fontsize=8, ha='left')
 
     plt.tight_layout()
     plt.grid(axis='y', alpha=0.3)
@@ -150,18 +162,30 @@ def plot_success_rate_vs_repo_size(repo_size_data, title_suffix="Repo", filename
     bucket_labels = [bucket['label'] for bucket in buckets]
 
     plt.figure(figsize=(12, 6))
-    bars = plt.bar(range(len(bucket_labels)), success_rates, color='darkgreen', alpha=0.7)
+    
+    # Calculate midpoints of buckets for x-axis
+    x_positions = [(bucket['min_size'] + bucket['max_size']) / 2 for bucket in buckets]
+    
+    # Create scatter plot
+    scatter = plt.scatter(x_positions, success_rates, 
+                         s=[bucket['total'] * 10 for bucket in buckets],  # Size proportional to sample count
+                         c=success_rates, cmap='RdYlGn', 
+                         alpha=0.7, edgecolors='black', linewidth=0.5)
 
-    plt.xlabel('Repo Size Range')
+    plt.xlabel('Repo Size (bytes)')
     plt.ylabel('Average Success Rate')
-    plt.title(f'Average Success Rate vs {title_suffix} Size (Percentile-Based Buckets)')
-    plt.xticks(range(len(bucket_labels)), bucket_labels, rotation=45)
+    plt.title(f'Average Success Rate vs {title_suffix} Size')
     plt.ylim(0, 1)
+    
+    # Add colorbar
+    plt.colorbar(scatter, label='Success Rate')
 
-    for i, (bar, bucket) in enumerate(zip(bars, buckets)):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
-                f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
-                ha='center', va='bottom', fontsize=8)
+    # Add annotations for each point
+    for i, bucket in enumerate(buckets):
+        plt.annotate(f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
+                    (x_positions[i], success_rates[i]),
+                    xytext=(5, 5), textcoords='offset points',
+                    fontsize=8, ha='left')
 
     plt.tight_layout()
     plt.grid(axis='y', alpha=0.3)
