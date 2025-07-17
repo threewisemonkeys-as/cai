@@ -69,34 +69,56 @@ def plot_success_rate_vs_patch_size(patch_size_data, title_suffix="", filename_s
     success_rates = [bucket['success_rate'] for bucket in buckets]
     bucket_labels = [bucket['label'] for bucket in buckets]
 
-    plt.figure(figsize=(12, 6))
+    # Plot 1: Bar chart (grouped by percentiles)
+    plt.figure(figsize=(15, 10))
     
-    # Calculate midpoints of buckets for x-axis
-    x_positions = [(bucket['min_size'] + bucket['max_size']) / 2 for bucket in buckets]
-    
-    # Create scatter plot
-    scatter = plt.scatter(x_positions, success_rates, 
-                         s=[bucket['total'] * 10 for bucket in buckets],  # Size proportional to sample count
-                         c=success_rates, cmap='RdYlGn', 
-                         alpha=0.7, edgecolors='black', linewidth=0.5)
+    # Subplot 1: Bar chart
+    plt.subplot(2, 1, 1)
+    bars = plt.bar(range(len(bucket_labels)), success_rates, color='steelblue', alpha=0.7)
 
-    plt.xlabel('Patch Size (lines changed)')
+    plt.xlabel('Patch Size Range (lines changed)')
     plt.ylabel('Average Success Rate')
-    plt.title(f'Average Success Rate vs {title_suffix} Patch Size')
+    plt.title(f'Average Success Rate vs {title_suffix} Patch Size (Percentile-Based Buckets)')
+    plt.xticks(range(len(bucket_labels)), bucket_labels, rotation=45)
     plt.ylim(0, 1)
-    
-    # Add colorbar
-    plt.colorbar(scatter, label='Success Rate')
 
-    # Add annotations for each point
-    for i, bucket in enumerate(buckets):
-        plt.annotate(f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
-                    (x_positions[i], success_rates[i]),
-                    xytext=(5, 5), textcoords='offset points',
-                    fontsize=8, ha='left')
+    for i, (bar, bucket) in enumerate(zip(bars, buckets)):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
+                f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
+                ha='center', va='bottom', fontsize=8)
+    
+    plt.grid(axis='y', alpha=0.3)
+    
+    # Subplot 2: Scatter plot (individual data points)
+    plt.subplot(2, 1, 2)
+    
+    # Extract individual data points
+    patch_sizes = [item['patch_size'] for item in patch_size_data]
+    success_values = [1 if item['success'] else 0 for item in patch_size_data]
+    
+    # Create scatter plot with jitter for better visibility
+    import numpy as np
+    jitter = np.random.normal(0, 0.02, len(success_values))  # Small random jitter
+    y_positions = [val + jit for val, jit in zip(success_values, jitter)]
+    
+    # Color points based on success
+    colors = ['red' if not success else 'green' for success in [item['success'] for item in patch_size_data]]
+    
+    plt.scatter(patch_sizes, y_positions, c=colors, alpha=0.6, s=20)
+    
+    plt.xlabel('Patch Size (lines changed)')
+    plt.ylabel('Success (0=Failure, 1=Success)')
+    plt.title(f'Individual Results: {title_suffix} Patch Size vs Success')
+    plt.ylim(-0.1, 1.1)
+    
+    # Add legend
+    plt.scatter([], [], c='red', alpha=0.6, s=20, label='Failure')
+    plt.scatter([], [], c='green', alpha=0.6, s=20, label='Success')
+    plt.legend()
+    
+    plt.grid(axis='both', alpha=0.3)
 
     plt.tight_layout()
-    plt.grid(axis='y', alpha=0.3)
     plt.savefig(f"{filename_suffix}_patch_size_success_rate.png", dpi=300, bbox_inches='tight')
     plt.show()
 
@@ -161,34 +183,56 @@ def plot_success_rate_vs_repo_size(repo_size_data, title_suffix="Repo", filename
     success_rates = [bucket['success_rate'] for bucket in buckets]
     bucket_labels = [bucket['label'] for bucket in buckets]
 
-    plt.figure(figsize=(12, 6))
+    # Plot 1: Bar chart (grouped by percentiles)
+    plt.figure(figsize=(15, 10))
     
-    # Calculate midpoints of buckets for x-axis
-    x_positions = [(bucket['min_size'] + bucket['max_size']) / 2 for bucket in buckets]
-    
-    # Create scatter plot
-    scatter = plt.scatter(x_positions, success_rates, 
-                         s=[bucket['total'] * 10 for bucket in buckets],  # Size proportional to sample count
-                         c=success_rates, cmap='RdYlGn', 
-                         alpha=0.7, edgecolors='black', linewidth=0.5)
+    # Subplot 1: Bar chart
+    plt.subplot(2, 1, 1)
+    bars = plt.bar(range(len(bucket_labels)), success_rates, color='darkgreen', alpha=0.7)
 
-    plt.xlabel('Repo Size (bytes)')
+    plt.xlabel('Repo Size Range')
     plt.ylabel('Average Success Rate')
-    plt.title(f'Average Success Rate vs {title_suffix} Size')
+    plt.title(f'Average Success Rate vs {title_suffix} Size (Percentile-Based Buckets)')
+    plt.xticks(range(len(bucket_labels)), bucket_labels, rotation=45)
     plt.ylim(0, 1)
-    
-    # Add colorbar
-    plt.colorbar(scatter, label='Success Rate')
 
-    # Add annotations for each point
-    for i, bucket in enumerate(buckets):
-        plt.annotate(f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
-                    (x_positions[i], success_rates[i]),
-                    xytext=(5, 5), textcoords='offset points',
-                    fontsize=8, ha='left')
+    for i, (bar, bucket) in enumerate(zip(bars, buckets)):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, 
+                f'{bucket["success_rate"]:.2f}\n(n={bucket["total"]})', 
+                ha='center', va='bottom', fontsize=8)
+    
+    plt.grid(axis='y', alpha=0.3)
+    
+    # Subplot 2: Scatter plot (individual data points)
+    plt.subplot(2, 1, 2)
+    
+    # Extract individual data points
+    repo_sizes = [item['repo_size'] for item in repo_size_data]
+    success_values = [1 if item['success'] else 0 for item in repo_size_data]
+    
+    # Create scatter plot with jitter for better visibility
+    import numpy as np
+    jitter = np.random.normal(0, 0.02, len(success_values))  # Small random jitter
+    y_positions = [val + jit for val, jit in zip(success_values, jitter)]
+    
+    # Color points based on success
+    colors = ['red' if not success else 'green' for success in [item['success'] for item in repo_size_data]]
+    
+    plt.scatter(repo_sizes, y_positions, c=colors, alpha=0.6, s=20)
+    
+    plt.xlabel('Repo Size (bytes)')
+    plt.ylabel('Success (0=Failure, 1=Success)')
+    plt.title(f'Individual Results: {title_suffix} Size vs Success')
+    plt.ylim(-0.1, 1.1)
+    
+    # Add legend
+    plt.scatter([], [], c='red', alpha=0.6, s=20, label='Failure')
+    plt.scatter([], [], c='green', alpha=0.6, s=20, label='Success')
+    plt.legend()
+    
+    plt.grid(axis='both', alpha=0.3)
 
     plt.tight_layout()
-    plt.grid(axis='y', alpha=0.3)
     plt.savefig(f"{filename_suffix}_size_success_rate.png", dpi=300, bbox_inches='tight')
     plt.show()
 
