@@ -1,0 +1,702 @@
+import shutil
+import random
+from textwrap import shorten
+from datetime import datetime
+from pathlib import Path
+import tempfile
+import logging
+import requests
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import ast
+import hashlib
+import yaml
+import subprocess
+import threading
+import traceback
+
+
+from datasets import load_dataset
+from litellm import completion
+
+from swebench.harness.constants import (
+    FAIL_TO_PASS,
+    PASS_TO_PASS,
+    LOG_REPORT,
+)
+from swesmith.constants import LOG_DIR_RUN_VALIDATION, KEY_TIMED_OUT
+from swesmith.harness.valid import run_validation
+from swesmith.issue_gen.generate import IssueGen
+
+from swesmith.bug_gen.criteria import filter_min_simple_complexity
+from swesmith.bug_gen.llm.utils import (
+    PROMPT_KEYS,
+    extract_code_block,
+)
+from swesmith.bug_gen.utils import (
+    BugRewrite,
+    apply_code_change,
+    extract_entities_from_directory,
+    get_patch,
+)
+
+from athils import JsonLinesFile
+
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+from dotenv import load_dotenv
+load_dotenv()
+
+LM_REWRITE = "lm_rewrite"
+
+CUR_DIR = Path(__file__).parent
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+COST_LIM = 20.0
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+AZURE_AD_TOKEN_PROVIDER = get_bearer_token_provider(DefaultAzureCredential(), os.getenv("AZURE_API_SCOPE", None))
+
+def get_full_commit_id(repo: str, short_commit_id: str) -> str | None:
+    """Fetch the full commit SHA from GitHub API."""
+    response = requests.get(
+        url=f"https://api.github.com/repos/{repo}/commits/{short_commit_id}",
+        headers={"Authorization": GITHUB_TOKEN}
+    )
+    
+    if response.status_code == 200:
+        commit_data = response.json()
+        return commit_data['sha']
+    else:
+        return None
+
+
+
+def get_function_signature(node):
+    """Generate the function signature as a string."""
+    args = [ast.unparse(arg) for arg in node.args.args]  # For Python 3.9+
+    args_str = ", ".join(args)
+    return f"def {node.name}({args_str})"
+
+
+
+ISSUE_GEN_CONFIG_FILE_PATH = CUR_DIR / Path("sans_patch_issue_gen.yaml")
+
+
+class CustomIssueGen(IssueGen):
+    def __init__(
+        self,
+        model: str,
+        use_existing: bool,
+        n_workers: int,
+        experiment_id: Path,
+    ):
+        self.experiment_id = experiment_id
+        self.model = model
+        self.use_existing = use_existing
+        self.n_workers = n_workers
+
+        self.swebv = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
+
+        self.config = yaml.safe_load(ISSUE_GEN_CONFIG_FILE_PATH.read_text())
+        settings = self.config.get("settings", {})
+        self.n_instructions = settings.get("n_instructions", 1)
+        self.max_var_tokens = settings.get("max_var_tokens", 10_000)
+
+        self._lock = threading.Lock()
+
+# PROBLEM_STATEMENT = "" # TODO
+
+
+
+def clone_repo(repo: str, dest: str | None = None) -> str | None:
+    """Clone a repository from GitHub."""
+    clone_cmd = (
+        f"git clone git@github.com:{repo}.git"
+        if dest is None
+        else f"git clone git@github.com:{repo}.git {dest}"
+    )
+    subprocess.run(
+        clone_cmd,
+        check=True,
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return repo if dest is None else dest
+
+
+def create_instance_id(image_name: str, candidate) -> str:
+    _, arch, repo_name, short_commit_sha = image_name.split('.')
+    return f"{repo_name}.{short_commit_sha}.{candidate.file_path.replace('/', '__')}.{candidate.src_node.name}"
+
+def process_single_job(
+    jspec, 
+    model_name: str, 
+    run_id: str,
+    config_file: Path | str,
+    api_key: str | None = None,
+) -> tuple[dict | None, bool, str | None]:
+    """
+    Process a single Docker image.
+    
+    Returns:
+        Tuple of (jspec, success, error_message)
+    """
+    configs = yaml.safe_load(open(config_file, "r"))
+
+    image_name, candidate = jspec
+    _, arch, repo, short_commit_sha = image_name.split('.')
+    full_repo_name = f"swesmith/{repo}.{short_commit_sha}"
+    instance_id = create_instance_id(image_name=image_name, candidate=candidate)
+    jid = instance_id
+
+    try:
+        logger.info(f"Starting job for {jid}")
+
+        # create temp directory to clone the repo into
+        temp_dir = tempfile.TemporaryDirectory()
+        temp_repo_dir = clone_repo(full_repo_name, dest=str(Path(temp_dir.name) / repo))
+        temp_repo_dir = Path(temp_repo_dir)
+
+        rel_path = Path(str(candidate.file_path).split(repo, 1)[1].lstrip(os.sep))
+        candidate.file_path = str(temp_repo_dir / rel_path)
+
+        prompt_content = {
+            "func_signature": get_function_signature(candidate.src_node),
+            "func_to_improve": candidate.src_code,
+            "file_src_code": open(candidate.file_path).read(),
+        }
+
+        messages = [
+            {
+                "content": configs[k].format(**prompt_content),
+                "role": "user" if k != "system" else "system",
+            }
+            for k in PROMPT_KEYS
+            if k in configs
+        ]
+        messages = [x for x in messages if x["content"]]
+
+        response = completion(
+            model=model_name,
+            messages=messages,
+            n=1,
+            temperature=0.5,
+            api_key=api_key,
+            azure_ad_token_provider=AZURE_AD_TOKEN_PROVIDER,
+        )
+        message = response.choices[0].message
+        code_block = extract_code_block(message.content)
+        explanation = message.content.split("```", 1)[0].strip()
+
+        rewrite = BugRewrite(
+            rewrite=code_block,
+            explanation=explanation,
+            strategy=LM_REWRITE,
+            output=message.content,
+        )
+        apply_code_change(candidate, rewrite)
+        patch_text = get_patch(temp_repo_dir, reset_changes=True)
+
+        temp_dir.cleanup()
+
+        logger.info(f"Successfully generated patch for {jid}. Checking if it fails tests")
+        report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
+
+        if not report_path.exists():
+            instance_data = {
+                "strategy": "sweagent_buggen",
+                "instance_id": instance_id,
+                "patch": patch_text,
+                "image_name": image_name,
+            }
+            run_validation(
+                instance=instance_data,
+                run_id=run_id,
+                run_min_pregold=True,
+            )
+
+        if not report_path.exists():
+            logger.info(f"Could not find validation run report for {jid}")
+            return (None, False, None)
+
+        logger.info(f"Found report after running validation check for {jid} ")
+        report = json.load(open(report_path, "r"))
+        f2p, p2p = report[FAIL_TO_PASS], report[PASS_TO_PASS]
+        if KEY_TIMED_OUT in report:
+            logger.info(f"Validation timed out for {jid}")
+            return (None, False, None)
+        if len(f2p) == 0 or len(p2p) == 0:
+            logger.info(f"Generated patch for {jid} not buggy.")
+            return (None, False, None)
+
+        instance_data = {
+            "instance_id": instance_id,
+            "repo": full_repo_name,
+            "patch": patch_text,
+            FAIL_TO_PASS: f2p,
+            PASS_TO_PASS: p2p,
+            "created_at": datetime.now().isoformat(),
+            "image_name": image_name,
+        }
+
+        logger.info(f"Successfully analysed validation report for {jid}")
+        logger.info(f"Generating problem description text for {jid}")
+
+        issue_generator = CustomIssueGen(
+            model=model_name,
+            use_existing=True,
+            n_workers=1,
+            experiment_id=run_id,
+        )
+        with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
+            issue_generator.generate_issue(instance_data, 0, fp)
+            fp.flush()
+            fp.seek(0)
+            instance_data = json.load(fp)
+
+
+        return (instance_data, True, None)
+    
+    except Exception as e:
+        traceback.print_exc()
+        error_msg = f"Error processing {jid}: {str(e)}"
+        logger.error(error_msg)
+        return (None, False, error_msg)
+
+
+def regular(
+    images: str | Path,
+    model_name: str,
+    output_file: str | Path,
+    run_id: str,
+    config_file: str | Path,
+    api_key: str | None = None,
+    max_workers: int = 1,
+    max_tries: int = 1,
+    num_jobs: int | None = None,
+    shuffle: bool = False,
+):
+    """
+    Process Docker images in parallel with retry logic.
+    """
+
+
+    jobs_specs = []
+    image_names = Path(images).read_text().splitlines()
+    for image_name in image_names:
+        if '/' in image_name:
+            image_name = image_name.split('/')[1]
+        image_name = image_name.split(':')[0]
+        _, arch, repo, short_commit_sha = image_name.split('.')
+        full_repo_name = f"swesmith/{repo}.{short_commit_sha}"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_dir = clone_repo(full_repo_name, dest=str(Path(temp_dir) / repo))
+            candidates = [
+                x
+                for x in extract_entities_from_directory(repo_dir, "func")
+                if filter_min_simple_complexity(x, 3)
+            ]
+
+        for c in candidates:
+            jobs_specs.append((image_name, c))
+
+    if shuffle:
+        random.shuffle(jobs_specs)
+    
+    # Create output directory
+    output_file = Path(output_file)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    if output_file.exists():
+        pre_existing_data = json.load(open(output_file, "r"))
+        existing_instance_ids = set([i['instance_id'] for i in pre_existing_data])
+        jobs_specs = [(i, c) for (i, c) in jobs_specs if create_instance_id(i, c) not in existing_instance_ids]
+
+    num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
+    jobs_specs = jobs_specs[:num_jobs]
+    
+    logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
+    
+    # Track results and retry queue
+    successful_processes = 0
+    failed_processes = 0
+    retry_queue = []  # List of (image_name, attempt_count) tuples
+    
+    # Initialize all images with attempt count 1
+    current_batch = [(jspec, 1) for jspec in jobs_specs]
+    
+    while current_batch:
+        logger.info(f"Processing batch of {len(current_batch)} images...")
+        
+        # Process current batch in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks for current batch
+            future_to_jspec = {
+                executor.submit(process_single_job, jspec, model_name, run_id, config_file, api_key): (jspec, attempt)
+                for jspec, attempt in current_batch
+            }
+            
+            # Process completed tasks as they finish
+            for future in as_completed(future_to_jspec):
+                jspec, attempt = future_to_jspec[future]
+                result, success, error_msg = future.result()
+                
+                if success:
+                    successful_processes += 1
+                    logger.info(f"✓ Completed {jspec} on attempt {attempt} ({successful_processes}/{len(jobs_specs)})")
+                    if output_file.exists():
+                        pre_existing_data = json.load(open(output_file, "r"))
+                    else:
+                        pre_existing_data = []
+                    pre_existing_data.append(result)
+                    json.dump(pre_existing_data, open(output_file, "w"), indent=2)
+                else:
+                    if attempt < max_tries:
+                        # Add to retry queue for next batch
+                        retry_queue.append((jspec, attempt + 1))
+                        logger.warning(f"⚠ Failed {jspec} on attempt {attempt}/{max_tries}: {error_msg}. Will retry.")
+                    else:
+                        # Max tries reached, mark as permanently failed
+                        failed_processes += 1
+                        logger.error(f"✗ Failed {jspec} after {max_tries} attempts: {error_msg}. Giving up.")
+        
+        # Prepare next batch from retry queue
+        current_batch = retry_queue.copy()
+        retry_queue.clear()
+    
+    # Summary
+    total_processed = successful_processes + failed_processes
+    logger.info(f"Processing complete! Success: {successful_processes}, Failed: {failed_processes}, Total: {total_processed}")
+    
+    return {
+        'successful': successful_processes,
+        'failed': failed_processes,
+        'total': len(jobs_specs)
+    }
+
+
+
+def fmt_args(kwargs: dict, max_len: int = 100) -> str:
+    """Render kwargs dict compactly (hides `self`)."""
+    cleaned = {k: v for k, v in kwargs.items() if k != "self"}
+    if not cleaned:
+        return ""
+    return "  args={" + shorten(repr(cleaned)[1:-1], max_len) + "}"
+
+
+def fmt_event(ev: dict) -> str:
+    """Return one formatted line for a trace event."""
+    depth = ev.get("depth", 0)
+    indent = " " * (depth * 2)
+
+    call = ev["name"]
+    ctype = ev["call_type"]
+    loc = ev["location"]
+    parent = ev.get("parent_call")
+
+    line = f"{indent} {call} @ {loc}"
+    line += fmt_args(ev.get("arguments", {}))
+    if parent and parent != call:
+        line += f"  ctx: {shorten(parent, 40)}"
+    return line
+
+
+INCLUDE_TYPES = ["function_call"]
+
+def make_trace_desc(trace) -> str:
+    events = trace['trace_data']
+
+    if INCLUDE_TYPES is not None:
+        events = [
+            ev for ev in events
+            if ev.get("call_type") in INCLUDE_TYPES
+        ]
+
+    trace_str = "\n".join(fmt_event(ev) for ev in events)
+    return trace_str
+
+
+def process_single_trace_directed_job(
+    jspec, 
+    sweagent_logdir: Path | str, 
+    model_name: str, 
+    run_id: str,
+    config_file: str | Path,
+    api_key: str | None = None,
+) -> tuple[dict | None, bool, str | None]:
+    """
+    Process a single Docker image.
+    
+    Returns:
+        Tuple of (jspec, success, error_message)
+    """
+    jdata, seed = jspec
+    image_name, test, trace = jdata
+    jid = (image_name, test, seed)
+    test_sha = hashlib.sha256(test.encode('utf-8')).hexdigest()[:8]
+    instance_id = create_instance_id(image_name=image_name, seed=seed)
+    trace_desc = make_trace_desc(trace)
+    test_trace_desc = f"Runtime execution trace with for the test: {test} -\nFormat: <function name> @ <location>  args={{<function arguments>}}  ctx: <calling context>\n{trace_desc}"
+
+    try:
+        logger.info(f"Starting job for {jid}")
+        
+        # Create output directory for this image
+        sweagent_logdir = Path(sweagent_logdir)
+        image_output_dir = sweagent_logdir / image_name / test_sha / f"seed_{seed}"
+        image_output_dir.mkdir(exist_ok=True, parents=True)
+
+        pre_existing_patches = list(image_output_dir.rglob("*.patch"))
+        if len(pre_existing_patches) > 0:
+            for patch_file in pre_existing_patches:
+                shutil.rmtree(patch_file.parent)
+
+        _, arch, repo_name, short_commit_sha = image_name.split('.')
+        
+        repo = repo_name.replace('__', '/')
+        full_commit_sha = get_full_commit_id(repo, short_commit_sha)
+        if full_commit_sha is None:
+            error_msg = f"Could not get full commit sha for {image_name}"
+            logger.warning(error_msg)
+            return (image_name, False, error_msg)
+            
+        
+        # Build sweagent arguments
+        url = f"https://github.com/{repo}"
+        args = ["run"]
+        
+        if config_file is not None: 
+            args.extend([f"--config", str(config_file)])
+
+            
+        args += [
+            f"--agent.model.name={model_name}",
+            f"--agent.model.per_instance_cost_limit={COST_LIM}",
+            f"--env.repo.github_url={url}",
+            f"--env.repo.base_commit={full_commit_sha}",
+            f"--env.deployment.image={image_name}",
+            f"--output_dir={str(image_output_dir)}",
+        ]
+        
+        if api_key is not None:
+            args.append(f"--agent.model.api_key={api_key}")
+            
+
+        # Execute sweagent
+        config = BasicCLI(RunSingleConfig).get_config(args[1:])
+        config.problem_statement = TextProblemStatement(text=test_trace_desc)
+        run_single = RunSingle.from_config(config)
+        run_single.agent.model.config.completion_kwargs["azure_ad_token_provider"] = AZURE_AD_TOKEN_PROVIDER
+        run_single.run()
+
+        logger.info(f"Completed processing for {jid}")
+
+
+        issue_generator = CustomIssueGen(
+            model=model_name,
+            use_existing=True,
+            n_workers=1,
+            experiment_id=run_id,
+        )
+
+        current_patches = list(image_output_dir.rglob("*.patch"))
+        for patch_file in current_patches:
+            traj_files = list(patch_file.parent.glob("*.traj"))
+            if len(traj_files) == 0:
+                logger.info(f"Could not find trajectory file for {jid}")
+                continue
+
+            traj_data = json.load(open(traj_files[0], "r"))
+            if not ("info" in traj_data and "exit_status" in traj_data["info"]):
+                logger.info(f"Malformed trajectory file for image {jid}")
+                continue
+
+            if traj_data["info"]["exit_status"] == "submitted (exit_cost)":
+                logger.info(f"Processing completed early due to cost limit being reached for image {jid}")
+                continue
+
+            patch_text = patch_file.read_text()
+                
+            logger.info(f"Successfully generated patch for {jid}. Checking if it fails tests")
+            report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
+
+            if not report_path.exists():
+                instance_data = {
+                    "strategy": "sweagent_buggen",
+                    "instance_id": instance_id,
+                    "patch": patch_text,
+                    "image_name": image_name,
+                }
+                run_validation(
+                    instance=instance_data,
+                    run_id=run_id,
+                    run_min_pregold=True,
+                )
+
+            if not report_path.exists():
+                logger.info(f"Could not find validation run report for {jid}")
+                continue
+
+            logger.info(f"Found report after running validatoin check for {jid}")
+            report = json.load(open(report_path, "r"))
+            f2p, p2p = report[FAIL_TO_PASS], report[PASS_TO_PASS]
+            if KEY_TIMED_OUT in report or len(f2p) == 0 or len(p2p) == 0:
+                logger.info(f"Geneated patch for {jid} not buggy.")
+                continue
+
+            instance_data = {
+                "instance_id": instance_id,
+                "repo": f"swesmith/{repo_name}.{short_commit_sha}",
+                "patch": patch_text,
+                FAIL_TO_PASS: f2p,
+                PASS_TO_PASS: p2p,
+                "created_at": datetime.now().isoformat(),
+                "image_name": image_name,
+            }
+
+            logger.info(f"Successfully analysed validation report for {jid}")
+            logger.info(f"Generating problem description text for {jid}")
+
+            with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
+                issue_generator.generate_issue(instance_data, 0, fp)
+                fp.flush()
+                fp.seek(0)
+                instance_data = json.load(fp)
+
+
+            return (instance_data, True, None)
+        
+    
+        logger.info(f"Unsuccessfull job for {jid}")
+        return (None, False, None)
+        
+    except Exception as e:
+        traceback.print_exc()
+        error_msg = f"Error processing {jid}: {str(e)}"
+        logger.error(error_msg)
+        return (None, False, error_msg)
+
+
+def trace_directed(
+    traces: str | Path,
+    model_name: str,
+    output_file: str | Path,
+    run_id: str,
+    sweagent_logdir: str | Path,
+    config_file: str | Path,
+    seed_per_trace: int = 1,
+    api_key: str | None = None,
+    max_workers: int = 1,
+    max_tries: int = 1,
+    num_jobs: int | None = None,
+    shuffle: bool = False,
+):
+    """
+    Process Docker images in parallel with retry logic.
+    
+    Args:
+        images: Path to text file containing newline seperated list of images
+        model_name: Model name for the agent
+        output_file: File to store outputs
+        run_id: Name for run
+        seed_per_trace: Number of different seeds per image attempt
+        api_key: API key for the model
+        num_images: Limit number of images to process
+        max_workers: Maximum number of parallel workers
+        max_tries: Maximum number of retry attempts per image
+        num_jobs: Number of jobs to attempt. If None then attempt all
+    """
+
+
+
+    jobs_specs = []
+    trace_data = JsonLinesFile.read_from(traces)
+    for image_name, image_traces in trace_data:
+        if '/' in image_name:
+            image_name = image_name.split('/')[1]
+        image_name = image_name.split(':')[0]
+        for test, trace in image_traces:
+            for s in range(seed_per_trace):
+                jobs_specs.append(((image_name, test, trace), s))
+
+    if shuffle:
+        random.shuffle(jobs_specs)
+
+    # Create output directory
+    output_file = Path(output_file)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    if output_file.exists():
+        pre_existing_data = json.load(open(output_file, "r"))
+        existing_instance_ids = set([i['instance_id'] for i in pre_existing_data])
+        jobs_specs = [(t, s) for (t, s) in jobs_specs if create_instance_id(t[0], s) not in existing_instance_ids]
+
+    num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
+    jobs_specs = jobs_specs[:num_jobs]
+    
+    logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
+    
+    # Track results and retry queue
+    successful_processes = 0
+    failed_processes = 0
+    retry_queue = []  # List of (image_name, attempt_count) tuples
+    
+    # Initialize all images with attempt count 1
+    current_batch = [(jspec, 1) for jspec in jobs_specs]
+    
+    while current_batch:
+        logger.info(f"Processing batch of {len(current_batch)} images...")
+        
+        # Process current batch in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks for current batch
+            future_to_jspec = {
+                executor.submit(process_single_trace_directed_job, jspec, sweagent_logdir, model_name, run_id, config_file, api_key): (jspec, attempt)
+                for jspec, attempt in current_batch
+            }
+            
+            # Process completed tasks as they finish
+            for future in as_completed(future_to_jspec):
+                jspec, attempt = future_to_jspec[future]
+                result, success, error_msg = future.result()
+                
+                if success:
+                    successful_processes += 1
+                    logger.info(f"✓ Completed {jspec} on attempt {attempt} ({successful_processes}/{len(jobs_specs)})")
+                    if output_file.exists():
+                        pre_existing_data = json.load(open(output_file, "r"))
+                    else:
+                        pre_existing_data = []
+                    pre_existing_data.append(result)
+                    json.dump(pre_existing_data, open(output_file, "w"), indent=2)
+                else:
+                    if attempt < max_tries:
+                        # Add to retry queue for next batch
+                        retry_queue.append((jspec, attempt + 1))
+                        logger.warning(f"⚠ Failed {jspec} on attempt {attempt}/{max_tries}: {error_msg}. Will retry.")
+                    else:
+                        # Max tries reached, mark as permanently failed
+                        failed_processes += 1
+                        logger.error(f"✗ Failed {jspec} after {max_tries} attempts: {error_msg}. Giving up.")
+        
+        # Prepare next batch from retry queue
+        current_batch = retry_queue.copy()
+        retry_queue.clear()
+    
+    # Summary
+    total_processed = successful_processes + failed_processes
+    logger.info(f"Processing complete! Success: {successful_processes}, Failed: {failed_processes}, Total: {total_processed}")
+    
+    return {
+        'successful': successful_processes,
+        'failed': failed_processes,
+        'total': len(jobs_specs)
+    }
+
+if __name__ == '__main__':
+    import fire
+    fire.Fire({
+        "regular": regular,
+        "trace_directed": trace_directed,
+    })

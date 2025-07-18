@@ -1,17 +1,17 @@
+import shutil
 from pathlib import Path
+import tempfile
 import logging
 import requests
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, Tuple
 import json
-from textwrap import shorten
+import traceback
+
 
 from sweagent.run.common import BasicCLI
 from sweagent.run.run_single import RunSingle, RunSingleConfig
-from sweagent.agent.problem_statement import TextProblemStatement
 
-from athils import JsonLinesFile
 
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
@@ -19,12 +19,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CUR_DIR = Path(__file__).parent
-BUGGEN_CONFIG_FILE = CUR_DIR / "test_directed_buggen.yaml"
+BUGGEN_CONFIG_FILE = CUR_DIR / "buggen.yaml"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-DOCKER_ORG = "jyangballin"
-TAG = "latest"
 COST_LIM = 20.0
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 AZURE_AD_TOKEN_PROVIDER = get_bearer_token_provider(DefaultAzureCredential(), os.getenv("AZURE_API_SCOPE", None))
@@ -42,88 +40,43 @@ def get_full_commit_id(repo: str, short_commit_id: str) -> str | None:
     else:
         return None
 
+# PROBLEM_STATEMENT = "" # TODO
 
 
-def fmt_args(kwargs: dict, max_len: int = 100) -> str:
-    """Render kwargs dict compactly (hides `self`)."""
-    cleaned = {k: v for k, v in kwargs.items() if k != "self"}
-    if not cleaned:
-        return ""
-    return "  args={" + shorten(repr(cleaned)[1:-1], max_len) + "}"
-
-
-def fmt_event(ev: dict) -> str:
-    """Return one formatted line for a trace event."""
-    depth = ev.get("depth", 0)
-    indent = " " * (depth * 2)
-
-    call = ev["name"]
-    ctype = ev["call_type"]
-    loc = ev["location"]
-    parent = ev.get("parent_call")
-
-    line = f"{indent} {call} @ {loc}"
-    line += fmt_args(ev.get("arguments", {}))
-    if parent and parent != call:
-        line += f"  ctx: {shorten(parent, 40)}"
-    return line
-
-
-
-INCLUDE_TYPES = ["function_call"]
-
-def make_trace_desc(trace) -> str:
-    events = trace['trace_data']
-
-    if INCLUDE_TYPES is not None:
-        events = [
-            ev for ev in events
-            if ev.get("call_type") in INCLUDE_TYPES
-        ]
-
-    trace_str = "\n".join(fmt_event(ev) for ev in events)
-    return trace_str
-
+def create_instance_id(image_name: str, seed: int) -> str:
+    _, arch, repo_name, short_commit_sha = image_name.split('.')
+    return f"{repo_name}.{short_commit_sha}.sweagent_buggen.seed_{seed}"
 
 def process_single_job(
     jspec, 
-    output_dir: Path, 
+    sweagent_logdir: Path | str, 
     model_name: str, 
-    api_key: Optional[str]
-) -> Tuple[str, bool, Optional[str]]:
+    run_id: str,
+    api_key: str | None = None,
+) -> tuple[dict | None, bool, str | None]:
     """
     Process a single Docker image.
     
     Returns:
         Tuple of (jspec, success, error_message)
     """
-    image_name, trace_data = jspec
-    test, trace = trace_data
-
-
-    trace_desc = make_trace_desc(trace)
-    test_trace_desc = f"Runtime execution trace with for the test: {test} -\nFormat: <function name> @ <location>  args={{<function arguments>}}  ctx: <calling context>\n{trace_desc}"
+    image_name, seed = jspec
+    instance_id = create_instance_id(image_name=image_name, seed=seed)
 
     try:
-        logger.info(f"Starting processing for image {image_name} with trace of test {test}")
+        logger.info(f"Starting job for image {image_name} with seed {seed}")
         
         # Create output directory for this image
-        image_output_dir = output_dir / image_name
+        sweagent_logdir = Path(sweagent_logdir)
+        image_output_dir = sweagent_logdir / image_name / f"seed_{seed}"
         image_output_dir.mkdir(exist_ok=True, parents=True)
 
         pre_existing_patches = list(image_output_dir.rglob("*.patch"))
         if len(pre_existing_patches) > 0:
             for patch_file in pre_existing_patches:
-                traj_files = list(patch_file.parent.glob("*.traj"))
-                if traj_files:
-                    traj_data = json.load(open(traj_files[0], "r"))
-                    # Check for a valid trajectory file indicating success
-                    if "info" in traj_data and "exit_status" in traj_data["info"] and traj_data["info"]["exit_status"] != "submitted (exit_cost)":
-                        logger.info(f"Image {image_name} was already successfully processed. Skipping.")
-                        return (image_name, True, None)
+                shutil.rmtree(patch_file.parent)
 
-        _image_name, _tag = image_name.split(":")
-        _, arch, repo_name, short_commit_sha = _image_name.split('.')
+        _, arch, repo_name, short_commit_sha = image_name.split('.')
         
         repo = repo_name.replace('__', '/')
         full_commit_sha = get_full_commit_id(repo, short_commit_sha)
@@ -141,14 +94,13 @@ def process_single_job(
         if config_file is not None: 
             args.extend([f"--config", str(config_file)])
 
-        docker_image_name = image_name.replace('__', '_1776_')
             
         args += [
             f"--agent.model.name={model_name}",
             f"--agent.model.per_instance_cost_limit={COST_LIM}",
             f"--env.repo.github_url={url}",
             f"--env.repo.base_commit={full_commit_sha}",
-            f"--env.deployment.image={docker_image_name}",
+            f"--env.deployment.image={image_name}",
             f"--output_dir={str(image_output_dir)}",
         ]
         
@@ -158,67 +110,89 @@ def process_single_job(
 
         # Execute sweagent
         config = BasicCLI(RunSingleConfig).get_config(args[1:])
-        config.problem_statement = TextProblemStatement(text=test_trace_desc)
+        # config.problem_statement = TextProblemStatement(text=PROBLEM_STATEMENT)
         run_single = RunSingle.from_config(config)
         run_single.agent.model.config.completion_kwargs["azure_ad_token_provider"] = AZURE_AD_TOKEN_PROVIDER
         run_single.run()
 
         logger.info(f"Completed processing for image: {image_name}")
 
-        current_patches = list(image_output_dir.rglob("*.patch"))
-        for patch_file in current_patches:
-            traj_files = list(patch_file.parent.glob("*.traj"))
-            if len(traj_files) > 0:
-                traj_data = json.load(open(traj_files[0], "r"))
-                if "info" in traj_data and "exit_status" in traj_data["info"]:
-                    if traj_data["info"]["exit_status"] == "submitted (exit_cost)":
-                        logger.info(f"Processing completed early due to cost limit being reached for image: {image_name}")
-                        continue
-                    else:
-                        return (image_name, True, None)
-            
-            logger.info(f"Malformed trajectory data for image: {image_name}")
-            continue
-            
-        return (image_name, False, None)
+        traj_files = list(image_output_dir.rglob("*.traj"))
+        if len(traj_files) == 0:
+            logger.info(f"Could not find trajectory file for image {image_name} with {seed}")
+            return (None, False, None)
+
+        traj_data = json.load(open(traj_files[0], "r"))
+        if not ("info" in traj_data and "exit_status" in traj_data["info"]):
+            logger.info(f"Malformed trajectory file for image {image_name} with seed {seed}")
+            return (None, False, None)
+
+        if traj_data["info"]["exit_status"] == "submitted (exit_cost)":
+            logger.info(f"Processing completed early due to cost limit being reached for image {image_name} with seed {seed}")
+            return (None, False, None)
+        
+        # try to extract result from last action
+        
+
+
+
+
+        return (instance_data, True, None)
+        
+    
         
     except Exception as e:
+        traceback.print_exc()
         error_msg = f"Error processing {image_name}: {str(e)}"
         logger.error(error_msg)
-        return (image_name, False, error_msg)
+        return (None, False, error_msg)
+
+
+
 
 
 def main(
-    traces: str | Path,
+    images: str | Path,
     model_name: str,
-    output_dir: str | Path,
+    output_file: str | Path,
+    run_id: str,
+    sweagent_logdir: str | Path,
+    seed_per_image: int = 1,
     api_key: str | None = None,
-    max_workers: int = 4,
-    max_tries: int = 5,
+    max_workers: int = 1,
+    max_tries: int = 1,
+    num_jobs: int | None = None,
 ):
     """
     Process Docker images in parallel with retry logic.
     
     Args:
-        traces: Path to file containing traces
+        images: Path to text file containing newline seperated list of images
         model_name: Model name for the agent
-        output_dir: Directory to store outputs
+        output_file: File to store outputs
+        run_id: Name for run
+        seed_per_image: Number of different seeds per image attempt
         api_key: API key for the model
         num_images: Limit number of images to process
         max_workers: Maximum number of parallel workers
         max_tries: Maximum number of retry attempts per image
+        num_jobs: Number of jobs to attempt. If None then attempt all
     """
 
-    traces_data = JsonLinesFile.read_from(traces)
-    jobs_specs = []
-    for image_name, image_traces in traces_data:
-        for trace in image_traces:
-            jobs_specs.append((image_name, trace))
 
+    image_names = Path(images).read_text().splitlines()
+    jobs_specs = [(i, s) for i in image_names for s in range(seed_per_image)]
     
     # Create output directory
-    output_dir = Path(output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    output_file = Path(output_file)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    if output_file.exists():
+        pre_existing_data = json.load(open(output_file, "r"))
+        existing_instance_ids = set([i['instance_id'] for i in pre_existing_data])
+        jobs_specs = [(i, s) for (i, s) in jobs_specs if create_instance_id(i, s) not in existing_instance_ids]
+
+    num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
+    jobs_specs = jobs_specs[:num_jobs]
     
     logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
     
@@ -237,27 +211,33 @@ def main(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks for current batch
             future_to_jspec = {
-                executor.submit(process_single_job, jspec, output_dir, model_name, api_key): (jspec, attempt)
+                executor.submit(process_single_job, jspec, sweagent_logdir, model_name, run_id, api_key): (jspec, attempt)
                 for jspec, attempt in current_batch
             }
             
             # Process completed tasks as they finish
             for future in as_completed(future_to_jspec):
                 jspec, attempt = future_to_jspec[future]
-                _, success, error_msg = future.result()
+                result, success, error_msg = future.result()
                 
                 if success:
                     successful_processes += 1
-                    logger.info(f"✓ Completed {jspec[0]} on attempt {attempt} ({successful_processes}/{len(jobs_specs)})")
+                    logger.info(f"✓ Completed {jspec} on attempt {attempt} ({successful_processes}/{len(jobs_specs)})")
+                    if output_file.exists():
+                        pre_existing_data = json.load(open(output_file, "r"))
+                    else:
+                        pre_existing_data = []
+                    pre_existing_data.append(result)
+                    json.dump(pre_existing_data, open(output_file, "w"), indent=2)
                 else:
                     if attempt < max_tries:
                         # Add to retry queue for next batch
                         retry_queue.append((jspec, attempt + 1))
-                        logger.warning(f"⚠ Failed {jspec[0]} on attempt {attempt}/{max_tries}: {error_msg}. Will retry.")
+                        logger.warning(f"⚠ Failed {jspec} on attempt {attempt}/{max_tries}: {error_msg}. Will retry.")
                     else:
                         # Max tries reached, mark as permanently failed
                         failed_processes += 1
-                        logger.error(f"✗ Failed {jspec[0]} after {max_tries} attempts: {error_msg}. Giving up.")
+                        logger.error(f"✗ Failed {jspec} after {max_tries} attempts: {error_msg}. Giving up.")
         
         # Prepare next batch from retry queue
         current_batch = retry_queue.copy()

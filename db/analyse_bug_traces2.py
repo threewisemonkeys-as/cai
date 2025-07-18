@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import logging
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -6,6 +7,7 @@ from collections import defaultdict
 
 from athils import JsonLinesFile
 from utils import snip_trace
+from trace_viz import render_trace
 
 
 @dataclass
@@ -122,11 +124,22 @@ def calculate_cross_module_calls(trace_data: List[Dict]) -> Tuple[int, Dict[str,
     return cross_module_count, dict(module_interactions)
 
 
-def format_repo_results(repo_name: str, repo_stats: Dict[str, Any], threshold: Optional[int] = None) -> str:
+def format_instance_results(instance: dict, test_traces: list, repo_stats: Dict[str, Any], threshold: Optional[int] = None, result: dict | None = None) -> str:
     """Format results for a single repository"""
     output = [f"\n{'='*60}"]
-    output.append(f"Repository: {repo_name}")
+    output.append(f"Problem: {instance['instance_id']}")
     output.append('='*60)
+
+    output.append(instance['problem_statement'])
+    output.append('-'*40)
+    output.append(instance['patch'])
+    output.append('-'*40)
+
+
+    if result is not None:
+        output.append(f"Solved by agent: {result['success']}")
+        output.append(result['patch'])
+
     output.append(f"Total test points analyzed: {repo_stats['num_points']}")
     output.append(f"Entrypoint found rate: {repo_stats['ep_found_rate']:.2%}")
     
@@ -161,6 +174,20 @@ def format_repo_results(repo_name: str, repo_stats: Dict[str, Any], threshold: O
     output.append("")
     output.append("Post-Entrypoint Unique Calls:")
     output.append(f"  {repo_stats['post_ep_unique']}")
+    output.append("")
+    output.append("Post-Entrypoint Max Depth:")
+    output.append(f"  {repo_stats['post_ep_max_depth']}")
+
+
+    output.append('-'*60)
+    for test, trace in test_traces:
+        output.append(f"TRACE FOR TEST: {test}\n{'-'*10}")
+        try:
+            snipped = snip_trace(trace['trace_data'], test)
+            output.append(render_trace(snipped))
+        except:
+            pass
+        output.append('-'*30)
     
     return "\n".join(output)
 
@@ -171,6 +198,7 @@ def format_summary_results(all_repo_stats: Dict[str, Dict[str, Any]], threshold:
     all_lengths = []
     all_post_ep_lens = []
     all_post_ep_unique = []
+    all_post_ep_max_depth = []
     all_ep_found_rates = []
     total_points = 0
     total_above_threshold = 0
@@ -181,10 +209,11 @@ def format_summary_results(all_repo_stats: Dict[str, Dict[str, Any]], threshold:
     all_cross_module_counts = []
     all_module_interactions = defaultdict(int)
     
-    for repo_stats in all_repo_stats.values():
+    for repo_stats, _, _ in all_repo_stats.values():
         all_lengths.extend(repo_stats['raw_lengths'])
         all_post_ep_lens.extend(repo_stats['raw_post_ep_lens'])
         all_post_ep_unique.extend(repo_stats['raw_post_ep_unique'])
+        all_post_ep_max_depth.extend(repo_stats['raw_post_ep_max_depth'])
         all_ep_found_rates.append(repo_stats['ep_found_rate'])
         total_points += repo_stats['num_points']
         
@@ -206,6 +235,7 @@ def format_summary_results(all_repo_stats: Dict[str, Dict[str, Any]], threshold:
     summary_lengths = calculate_stats(all_lengths)
     summary_post_ep_lens = calculate_stats(all_post_ep_lens)
     summary_post_ep_unique = calculate_stats(all_post_ep_unique)
+    summary_post_ep_max_depth = calculate_stats(all_post_ep_max_depth)
     avg_ep_found_rate = sum(all_ep_found_rates) / len(all_ep_found_rates) if all_ep_found_rates else 0
     
     # Overall complexity summary
@@ -247,11 +277,14 @@ def format_summary_results(all_repo_stats: Dict[str, Dict[str, Any]], threshold:
     output.append("")
     output.append("Overall Post-Entrypoint Unique Calls:")
     output.append(f"  {summary_post_ep_unique}")
+    output.append("")
+    output.append("Overall Post-Entrypoint Max depths:")
+    output.append(f"  {summary_post_ep_max_depth}")
     
     return "\n".join(output)
 
 
-def analyse(data_path: Path | str, output_file: Optional[str] = None, threshold: Optional[int] = None):
+def analyse(data_path: Path | str, output_file: Optional[str] = None, threshold: Optional[int] = None, result: str | Path | None = None):
     """
     Analyze trace data with enhanced statistics including complexity metrics.
     
@@ -275,110 +308,129 @@ def analyse(data_path: Path | str, output_file: Optional[str] = None, threshold:
     logging.info(f"Loaded data with {len(data)} entries")
     
     all_repo_stats = {}
-    
-    for entry_idx, entry in enumerate(data):
-        logging.info(f"Processing entry {entry_idx}: {list(entry.keys())}")
-        
-        for repo, repo_data in entry.items():
-            logging.info(f"Processing repo: {repo} with {len(repo_data)} tests")
-            
-            lengths, ep_founds, post_ep_lens, post_ep_unique, post_ep_max_depth = [], [], [], [], []
-            
-            # Complexity tracking - collect individual values for statistics
-            max_depths = []
-            cross_module_counts = []
-            all_module_interactions = defaultdict(int)
-            
-            for test, test_data in repo_data:
-                test_trace = test_data['trace_data']
-                lengths.append(len(test_trace))
-                
-                # Debug: Print trace info
-                logging.info(f"Processing test {test} with {len(test_trace)} trace entries")
-                
-                # Calculate complexity metrics for this trace
-                try:
-                    max_depth = calculate_max_call_depth(test_trace)
-                    cross_module_calls, module_interactions = calculate_cross_module_calls(test_trace)
-                    
-                    logging.info(f"Test {test}: max_depth={max_depth}, cross_module_calls={cross_module_calls}")
-                    
-                    # Collect individual values for statistical analysis
-                    max_depths.append(max_depth)
-                    cross_module_counts.append(cross_module_calls)
-                    
-                    # Aggregate module interactions
-                    for interaction, count in module_interactions.items():
-                        all_module_interactions[interaction] += count
-                        
-                except Exception as e:
-                    logging.error(f"Error calculating complexity metrics for {test}: {e}")
-                    max_depths.append(0)
-                    cross_module_counts.append(0)
-                
-                ep_found = False
-                try:
-                    snipped_trace = snip_trace(test_trace, test)
-                    ep_found = True
-                    post_ep_len = len(snipped_trace)
-                    post_ep_unique_count = len(set([(e['location'], e['name']) for e in snipped_trace]))
-                    
-                    post_ep_lens.append(post_ep_len)
-                    post_ep_unique.append(post_ep_unique_count)
-                    post_ep_max_depth.append(calculate_max_call_depth(snipped_trace))
-                except Exception as e:
-                    logging.warning(f"Could not find entrypoint {test} in trace (repo: {repo})")
-                
-                ep_founds.append(ep_found)
-            
-            # Calculate threshold-based metrics if threshold is provided
-            above_threshold_count = 0
-            total_with_entrypoint = len(post_ep_unique)  # Only traces where entrypoint was found
-            
-            if threshold is not None:
-                above_threshold_count = sum(1 for count in post_ep_unique if count > threshold)
-            
-            # Prepare complexity metrics with statistical summaries
-            top_interactions = sorted(all_module_interactions.items(), key=lambda x: x[1], reverse=True)
-            max_depth_stats = calculate_stats(max_depths)
-            cross_module_stats = calculate_stats(cross_module_counts)
-            
-            logging.info(f"Repo {repo} complexity summary: max_depth_stats={max_depth_stats}, cross_module_stats={cross_module_stats}, interactions={len(top_interactions)}")
-            
-            complexity_metrics = ComplexityMetrics(
-                max_depth_stats=max_depth_stats,
-                cross_module_stats=cross_module_stats,
-                top_module_interactions=top_interactions
-            )
-            
-            # Calculate statistics for this repo
-            repo_stats = {
-                'num_points': len(lengths),
-                'ep_found_rate': calculate_rate(ep_founds),
-                'lengths': calculate_stats(lengths),
-                'post_ep_lens': calculate_stats(post_ep_lens),
-                'post_ep_unique': calculate_stats(post_ep_unique),
-                'post_ep_max_depth': calculate_stats(post_ep_max_depth),
-                'above_threshold_count': above_threshold_count,
-                'total_with_entrypoint': total_with_entrypoint,
-                'complexity_metrics': complexity_metrics,
-                # Keep raw data for summary calculations
-                'raw_lengths': lengths,
-                'raw_post_ep_lens': post_ep_lens,
-                'raw_post_ep_unique': post_ep_unique,
-                'raw_post_ep_max_depth': post_ep_max_depth,
-                'raw_max_depths': max_depths,
-                'raw_cross_module_counts': cross_module_counts,
+
+    if result is not None:
+        agent_results = {}
+        for log_file in Path(result).rglob("*debug_gym.jsonl"):
+            agent_patch_file = log_file.parent / "debug_gym.patch"
+            if agent_patch_file.exists():
+                agent_patch = agent_patch_file.read_text()
+            else:
+                agent_patch = None
+            agent_data = json.load(open(log_file, "r"))
+            agent_results[agent_data['problem']] = {
+                'success': agent_data['success'],
+                'traj_len': len(agent_data['log']),
+                'patch': agent_patch,
             }
-            
-            all_repo_stats[repo] = repo_stats
+    else:
+        agent_results = None
+                
     
+    for instance, test_traces in data:
+    
+        logging.info(f"Processing instance: {instance['instance_id']} with {len(test_traces)} traces")
+        
+        lengths, ep_founds, post_ep_lens, post_ep_unique, post_ep_max_depth = [], [], [], [], []
+        
+        # Complexity tracking - collect individual values for statistics
+        max_depths = []
+        cross_module_counts = []
+        all_module_interactions = defaultdict(int)
+        for test, test_data in test_traces:
+            test_trace = test_data['trace_data']
+            lengths.append(len(test_trace))
+            
+            # Debug: Print trace info
+            logging.info(f"Processing test {test} with {len(test_trace)} trace entries")
+            
+            # Calculate complexity metrics for this trace
+            try:
+                max_depth = calculate_max_call_depth(test_trace)
+                cross_module_calls, module_interactions = calculate_cross_module_calls(test_trace)
+                
+                logging.info(f"Test {test}: max_depth={max_depth}, cross_module_calls={cross_module_calls}")
+                
+                # Collect individual values for statistical analysis
+                max_depths.append(max_depth)
+                cross_module_counts.append(cross_module_calls)
+                
+                # Aggregate module interactions
+                for interaction, count in module_interactions.items():
+                    all_module_interactions[interaction] += count
+                    
+            except Exception as e:
+                logging.error(f"Error calculating complexity metrics for {test}: {e}")
+                max_depths.append(0)
+                cross_module_counts.append(0)
+            
+            ep_found = False
+            try:
+                snipped_trace = snip_trace(test_trace, test)
+                ep_found = True
+                post_ep_len = len(snipped_trace)
+                post_ep_unique_count = len(set([(e['location'], e['name']) for e in snipped_trace]))
+                
+                post_ep_lens.append(post_ep_len)
+                post_ep_unique.append(post_ep_unique_count)
+                post_ep_max_depth.append(calculate_max_call_depth(snipped_trace))
+            except Exception as e:
+                logging.warning(f"Could not find entrypoint {test} in trace (instance: {instance['instance_id']})")
+            
+            ep_founds.append(ep_found)
+        
+        # Calculate threshold-based metrics if threshold is provided
+        above_threshold_count = 0
+        total_with_entrypoint = len(post_ep_unique)  # Only traces where entrypoint was found
+        
+        if threshold is not None:
+            above_threshold_count = sum(1 for count in post_ep_unique if count > threshold)
+        
+        # Prepare complexity metrics with statistical summaries
+        top_interactions = sorted(all_module_interactions.items(), key=lambda x: x[1], reverse=True)
+        max_depth_stats = calculate_stats(max_depths)
+        cross_module_stats = calculate_stats(cross_module_counts)
+        
+        logging.info(f"Instance {instance['instance_id']} complexity summary: max_depth_stats={max_depth_stats}, cross_module_stats={cross_module_stats}, interactions={len(top_interactions)}")
+        
+        complexity_metrics = ComplexityMetrics(
+            max_depth_stats=max_depth_stats,
+            cross_module_stats=cross_module_stats,
+            top_module_interactions=top_interactions
+        )
+        
+        # Calculate statistics for this repo
+        repo_stats = {
+            'num_points': len(lengths),
+            'ep_found_rate': calculate_rate(ep_founds),
+            'lengths': calculate_stats(lengths),
+            'post_ep_lens': calculate_stats(post_ep_lens),
+            'post_ep_unique': calculate_stats(post_ep_unique),
+            'post_ep_max_depth': calculate_stats(post_ep_max_depth),
+            'above_threshold_count': above_threshold_count,
+            'total_with_entrypoint': total_with_entrypoint,
+            'complexity_metrics': complexity_metrics,
+            # Keep raw data for summary calculations
+            'raw_lengths': lengths,
+            'raw_post_ep_lens': post_ep_lens,
+            'raw_post_ep_unique': post_ep_unique,
+            'raw_post_ep_max_depth': post_ep_max_depth,
+            'raw_max_depths': max_depths,
+            'raw_cross_module_counts': cross_module_counts,
+        }
+        
+        all_repo_stats[instance['instance_id']] = repo_stats, instance, test_traces
+
     # Generate output
     output_lines = []
     
     # Individual repo results
-    for repo_name, repo_stats in all_repo_stats.items():
-        output_lines.append(format_repo_results(repo_name, repo_stats, threshold))
+    for repo_name, (repo_stats, instance, test_traces) in all_repo_stats.items():
+        if agent_results is not None and repo_name in agent_results:
+            _result = agent_results[repo_name]
+        else:
+            _result = None
+        output_lines.append(format_instance_results(instance, test_traces, repo_stats, threshold, _result))
     
     # Summary results
     output_lines.append(format_summary_results(all_repo_stats, threshold))
