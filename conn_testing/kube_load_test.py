@@ -27,19 +27,11 @@ from r2egym.agenthub.runtime.docker import DockerRuntime
 DEFAULT_TIMEOUT = 30
 
 import logging
-import sys
 
-def init_logging(level: str = "INFO", logfile: str | None = None) -> None:
-    """Configure root logger so DockerRuntime / KubernetesRuntime messages appear."""
-    handlers = [logging.StreamHandler(sys.stdout)]
-    if logfile:
-        handlers.append(logging.FileHandler(logfile, mode="w"))
-
-    logging.basicConfig(
-        level=level.upper(),
-        format="%(asctime)s %(threadName)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=handlers,
-    )
+logging.basicConfig(
+    level=logging.INFO,             # print INFO and above
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 def _run_one(sample: Any, cmd: str, timeout: int) -> Tuple[str, bool, float, str | None, str | None]:
@@ -100,8 +92,6 @@ def run(
     print(f"Launching {workers} worker(s) over {n_samples} sample(s)…")
     successes = failures = 0
     total_time = 0.0
-
-    init_logging(level="INFO", logfile="load_test.log")
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_run_one, s, cmd, timeout): s for s in chosen}
