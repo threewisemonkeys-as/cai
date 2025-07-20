@@ -78,7 +78,40 @@ sudo apt-get update -y
 sudo apt-get install -y cloudflared
 
 ###############################################################################
-log "3. Install Kubernetes CLI (kubectl)"
+log "3. Create SSH tunnel"
+###############################################################################
+
+# Ensure autossh is available
+if ! command -v autossh &>/dev/null; then
+  sudo apt-get install -y autossh
+fi
+
+# Start tunnel:
+#  -M 0    : disable status port, rely on SSH keep‑alives
+#  -f      : background only after tunnel is up
+#  -N      : no remote command
+#  -L      : local→remote forward
+autossh -M 0 -f -N \
+  -L 6443:localhost:6443 \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=60 \
+  -o ServerAliveCountMax=3 \
+  kube-remote
+
+SSH_PID=$(pgrep -f "autossh.*6443:localhost:6443.*kube-remote")
+trap 'kill "$SSH_PID"' EXIT
+
+# Quick health‑check (optional, but makes failures obvious)
+for attempt in {1..10}; do
+  if nc -z localhost 6443; then
+    log "▶ Tunnel is up"
+    break
+  fi
+  sleep 1
+done || abort "SSH tunnel failed to come up"
+
+###############################################################################
+log "4. Install Kubernetes CLI (kubectl)"
 ###############################################################################
 
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
@@ -99,15 +132,6 @@ fi
 source "$HOME/.bashrc"
 
 kubectl get nodes
-
-###############################################################################
-log "4. Create ssh tunnel in the background"
-###############################################################################
-
-ssh -vvv -N -L 6443:localhost:6443 -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 kube-remote &
-SSH_PID=$!
-trap "kill $SSH_PID" EXIT
-
 
 ###############################################################################
 log "5. Install additional dependencies"
@@ -132,8 +156,8 @@ pip install docker[ssh]
 log "6. Run script"
 ###############################################################################
 
-
-bash rllm/examples/swe/train_deepswe_4b.sh
+cd rllm/examples/swe
+bash train_deepswe_4b.sh
 
 log "All steps completed successfully!"
 
