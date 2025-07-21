@@ -14,8 +14,8 @@ abort() { log "ERROR: $*"; exit 1; }
 trap 'abort "Script failed at line $LINENO (command: $BASH_COMMAND)"' ERR
 
 # ---- variables --------------------------------------------------------------
-DOCKERD_REMOTE_HOST="boots-liked-substantial-plus.trycloudflare.com"
-DOCKERD_REMOTE_USER="t-atsonwane@microsoft.com"
+CPU_REMOTE_HOST="arrival-similarly-kerry-recognize.trycloudflare.com"
+CPU_REMOTE_USER="t-atsonwane@microsoft.com"
 SSH_KEY_PRIVATE="gcr"
 SSH_KEY_PUBLIC="gcr.pub"
 CONDA_DIR="$HOME/miniconda"
@@ -35,10 +35,10 @@ install -m 0644 "$SSH_KEY_PUBLIC"  "$HOME/.ssh/gcr.pub"
 SSH_CONFIG="$HOME/.ssh/config"
 SSH_BACKUP="$SSH_CONFIG.$(date +%F_%T).bak"
 
-SSH_HOST_BLOCK="$(cat <<'EOF'
+SSH_HOST_BLOCK="$(cat <<EOF
 Host kube-remote
-    HostName arrival-similarly-kerry-recognize.trycloudflare.com
-    User t-atsonwane@microsoft.com
+    HostName ${CPU_REMOTE_HOST}
+    User ${CPU_REMOTE_USER}
     IdentityFile ~/.ssh/gcr
     ControlMaster auto
     ControlPath ~/.ssh/control-%C
@@ -102,6 +102,10 @@ SSH_PID=$(pgrep -f "autossh.*6443:localhost:6443.*kube-remote")
 trap 'kill "$SSH_PID"' EXIT
 
 # Quick health‑check (optional, but makes failures obvious)
+# install nc if not available
+if ! command -v nc &>/dev/null; then
+  sudo apt-get install -y netcat
+fi
 for attempt in {1..10}; do
   if nc -z localhost 6443; then
     log "▶ Tunnel is up"
@@ -119,17 +123,16 @@ chmod +x kubectl
 mkdir -p ~/.local/bin
 mv ./kubectl ~/.local/bin/kubectl
 export PATH="$PATH:$HOME/.local/bin"
-if ! grep -q 'export PATH="\$PATH:\$HOME/.local/bin"' "$HOME/.bashrc"; then
-  echo 'export PATH="$PATH:$HOME/.local/bin"' >> "$HOME/.bashrc"
-fi
+log "PATH is now $PATH"
 
-KUBECONFIG_FILE="$(dirname "$0")/k3s.yaml"
-if ! grep -q 'export KUBECONFIG=' "$HOME/.bashrc";
-then
-  echo "export KUBECONFIG=\"$KUBECONFIG_FILE\"" >> "$HOME/.bashrc"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KUBECONFIG_FILE="$SCRIPT_DIR/k3s.yaml"
+if [[ ! -f "$KUBECONFIG_FILE" ]]; then
+    echo "ERROR: $KUBECONFIG_FILE missing – copy it from the cluster first." >&2
+    exit 1
 fi
-
-source "$HOME/.bashrc"
+export KUBECONFIG="$KUBECONFIG_FILE"
+log "KUBECONFIG set to $KUBECONFIG"
 
 kubectl get nodes
 
@@ -157,7 +160,7 @@ log "6. Run script"
 ###############################################################################
 
 cd rllm/examples/swe
-bash train_deepswe_4b.sh
+bash train_deepswe_8b_8h100.sh
 
 log "All steps completed successfully!"
 
