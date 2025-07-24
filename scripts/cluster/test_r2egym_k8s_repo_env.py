@@ -3,16 +3,20 @@
 Self-contained script to instantiate a RepoEnv with Kubernetes backend and call reset on it.
 """
 
-from datasets import load_dataset
+import json
+from pathlib import Path
+
 from r2egym.agenthub.environment.env import RepoEnv, EnvArgs
 
+CUR_DIR = Path(__file__).parent
+
 def main():
-    ds = load_dataset("R2E-Gym/R2E-Gym", split="train")
+    ds = json.load(open(CUR_DIR / "r2egym_sample.json", "r"))
     
     print("Creating RepoEnv with Kubernetes backend...")
     
     env = RepoEnv(
-        args=EnvArgs(ds[0]),
+        args=EnvArgs(ds),
         backend="kubernetes",
         verbose=True,
         step_timeout=90,
