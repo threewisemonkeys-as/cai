@@ -14,6 +14,12 @@ abort() { log "ERROR: $*"; exit 1; }
 trap 'abort "Script failed at line $LINENO (command: $BASH_COMMAND)"' ERR
 
 
+# ---- variables ---------------------------------------------------------------
+
+AZ_CLIENT_ID="7020352e-2535-4532-99b8-18e99901af1b"
+AZ_RESOURCE_GROUP="debug-gym"
+AZ_CLUSTER_NAME="debug-gym"
+
 
 ###############################################################################
 log "1. Install and setup azure-cli"
@@ -38,9 +44,9 @@ Signed-by: /etc/apt/keyrings/microsoft.gpg" | sudo tee /etc/apt/sources.list.d/a
 sudo apt-get update
 sudo apt-get -y install azure-cli 
 
-az login --identity --client-id 7020352e-2535-4532-99b8-18e99901af1b
+az login --identity --client-id "$AZ_CLIENT_ID"
 
-az aks get-credentials --resource-group debug-gym --name debug-gym --overwrite-existing
+az aks get-credentials --resource-group "$AZ_RESOURCE_GROUP" --name "$AZ_CLUSTER_NAME" --overwrite-existing
 
 
 ###############################################################################
@@ -54,12 +60,13 @@ mv ./kubectl ~/.local/bin/kubectl
 export PATH="$PATH:$HOME/.local/bin"
 log "PATH is now $PATH"
 
+sudo apt-get update 
+sudo apt-get install -y unzip
 
 curl -LO https://github.com/Azure/kubelogin/releases/latest/download/kubelogin-linux-amd64.zip
 unzip kubelogin-linux-amd64.zip
 sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
 rm -rf kubelogin-linux-amd64.zip bin/
-
 
 export KUBECONFIG="$HOME/.kube/config"
 log "KUBECONFIG set to $KUBECONFIG"
@@ -94,4 +101,3 @@ cd rllm/examples/swe
 bash train_deepswe_8b_8h100.sh
 
 log "All steps completed successfully!"
-
