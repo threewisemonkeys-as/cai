@@ -6,13 +6,12 @@ export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
-# Find the directory where rllm package is located
-RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
+DATA_DIR=$1
 
 python3 -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
-    data.train_files=${RLLM_DIR}/rllm/data/datasets/micro_r2egym/train_verl.parquet \
-    data.val_files=${RLLM_DIR}/rllm/data/datasets/SWE_Bench_Verified/test_verl.parquet \
+    data.train_files=${DATA_DIR}/micro_r2egym/train_verl.parquet \
+    data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=4 \
     data.val_batch_size=512 \
     data.max_prompt_length=5120 \
