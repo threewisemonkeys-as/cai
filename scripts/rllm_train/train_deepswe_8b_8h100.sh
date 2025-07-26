@@ -10,11 +10,11 @@ DATA_DIR=$1
 
 python3 -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
-    data.train_files=${DATA_DIR}/micro_r2egym/train_verl.parquet \
+    data.train_files=${DATA_DIR}/d3/train_verl.parquet \
     data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=16 \
     data.val_batch_size=512 \
-    data.max_prompt_length=5120 \
+    data.max_prompt_length=8096 \
     data.max_response_length=8096 \
     data.filter_overlong_prompts=True \
     data.filter_overlong_prompts_workers=1 \
@@ -23,7 +23,7 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-sum \
-    actor_rollout_ref.actor.ppo_mini_batch_size=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
