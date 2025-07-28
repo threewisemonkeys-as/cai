@@ -16,23 +16,19 @@ trap 'abort "Script failed at line $LINENO (command: $BASH_COMMAND)"' ERR
 
 # AZ_CLIENT_ID="7020352e-2535-4532-99b8-18e99901af1b"
 AZ_CLIENT_ID="7b009a27-5912-4556-8f17-0d3d707778ec"
-AZ_RESOURCE_GROUP="debug-gym"
-AZ_CLUSTER_NAME="debug-gym"
-
-
 az login --identity --client-id "$AZ_CLIENT_ID"
-
-az aks get-credentials --resource-group "$AZ_RESOURCE_GROUP" --name "$AZ_CLUSTER_NAME" --overwrite-existing
-
 
 export KUBECONFIG="$HOME/.kube/config"
 log "KUBECONFIG set to $KUBECONFIG"
+
+AZ_RESOURCE_GROUP="debug-gym"
+AZ_CLUSTER_NAME="debug-gym"
+az aks get-credentials --resource-group "$AZ_RESOURCE_GROUP" --name "$AZ_CLUSTER_NAME" --overwrite-existing
 
 kubelogin convert-kubeconfig -l azurecli
 
 kubectl get --raw='/readyz?verbose'
 kubectl get --raw='/healthz?verbose'
-
 
 
 errors=()
@@ -72,13 +68,3 @@ if ((${#errors[@]})); then
 else
   echo "🎉 All required RBAC permissions are present."
 fi
-
-kubectl -n default create rolebinding default-sa-edit \
-  --clusterrole=edit \
-  --serviceaccount=default:default \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-
-kubectl auth can-i create pods/exec -n default \
-  --as=system:serviceaccount:default:default
-
