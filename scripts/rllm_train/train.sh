@@ -52,7 +52,7 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
   data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
   data.train_batch_size=${TRAIN_BS} \
   data.val_batch_size=200 \
-  data.max_prompt_length=4096 \
+  data.max_prompt_length=5120 \
   data.max_response_length=8096 \
   data.filter_overlong_prompts=True \
   data.filter_overlong_prompts_workers=1 \
@@ -97,8 +97,8 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
   trainer.val_before_train=False \
   trainer.n_gpus_per_node=${GPUS_PER_NODE} \
   trainer.nnodes=${NODES} \
-  trainer.save_freq=1 \
-  trainer.test_freq=1 \
+  trainer.save_freq=50 \
+  trainer.test_freq=50 \
   trainer.default_hdfs_dir=null \
   trainer.default_local_dir=${EXP_LOG_DIR} \
   env.name=swe \

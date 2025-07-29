@@ -1,0 +1,35 @@
+## test
+## single node, single gpu
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-0.6B" -d "d3" -b 8 -r 2 -n 1 -g 1 /mnt/rllmdata /mnt/rllmlogs
+## single node, multi gpu
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-0.6B" -d "d3" -b 16 -r 2 -n 1 -g 2 /mnt/rllmdata /mnt/rllmlogs
+## multi node
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-0.6B" -d "d3" -b 32 -r 2 -n 2 -g 2 /mnt/rllmdata /mnt/rllmlogs
+
+## Qwen3-8B
+## 4x80G tbs=64
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-8B" -d "d3" -b 16 -r 4 -n 1 -g 4 /mnt/rllmdata /mnt/rllmlogs
+## 8x40G tbs=64
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-8B" -d "d3" -b 16 -r 4 -n 1 -g 8 /mnt/rllmdata /mnt/rllmlogs
+## 8x80G tbs=128
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-8B" -d "d3" -b 32 -r 4 -n 1 -g 8 /mnt/rllmdata /mnt/rllmlogs
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-8B" -d "d3" -b 16 -r 8 -n 1 -g 8 /mnt/rllmdata /mnt/rllmlogs
+## 16x80G tbs=256
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-8B" -d "d3" -b 32 -r 8 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-8B" -d "d3" -b 64 -r 4 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+
+## Qwen3-14B
+## 8x80G tbs=64
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-14B" -d "d3" -b 16 -r 4 -n 1 -g 8 /mnt/rllmdata /mnt/rllmlogs
+## 16x80G tbs=128
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-14B" -d "d3" -b 16 -r 8 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-14B" -d "d3" -b 32 -r 4 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+## 16x80G tbs=256 (slower)
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-14B" -d "d3" -b 32 -r 8 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+# - bash rllm_train/train.sh -m "Qwen/Qwen3-14B" -d "d3" -b 64 -r 4 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+
+## DeepSWE (Qwen3-32B trained)
+## 16x80G tbs=64
+# - bash rllm_train/train.sh -m "agentica-org/DeepSWE-Preview" -d "d3" -b 16 -r 4 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
+## 16x80G tbs=128 (slower)
+# - bash rllm_train/train.sh -m "agentica-org/DeepSWE-Preview" -d "d3" -b 16 -r 8 -n 2 -g 8 /mnt/rllmdata /mnt/rllmlogs
