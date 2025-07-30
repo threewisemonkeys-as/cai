@@ -1,10 +1,5 @@
 ## test
-## single node, single gpu
 # - bash rllm_train/train.sh -m "Qwen/Qwen3-0.6B" -d "d3" -b 8 -r 2 -n 1 -g 1 /mnt/rllmdata /mnt/rllmlogs
-## single node, multi gpu
-# - bash rllm_train/train.sh -m "Qwen/Qwen3-0.6B" -d "d3" -b 16 -r 2 -n 1 -g 2 /mnt/rllmdata /mnt/rllmlogs
-## multi node
-# - bash rllm_train/train.sh -m "Qwen/Qwen3-0.6B" -d "d3" -b 32 -r 2 -n 2 -g 2 /mnt/rllmdata /mnt/rllmlogs
 
 ## Qwen3-8B
 ## 4x80G tbs=64
