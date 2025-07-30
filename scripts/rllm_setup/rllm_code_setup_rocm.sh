@@ -1,5 +1,6 @@
 export PATH="$HOME/.local/bin:$PATH"
 
+conda config --set channel_priority strict
 conda create -n ray_env python=3.11 -y
 conda init
 source ~/.bashrc
