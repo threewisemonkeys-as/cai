@@ -52,7 +52,7 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
   data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
   data.train_batch_size=${TRAIN_BS} \
   data.val_batch_size=100 \
-  data.max_prompt_length=5120 \
+  data.max_prompt_length=6500 \
   data.max_response_length=8096 \
   data.filter_overlong_prompts=True \
   data.filter_overlong_prompts_workers=1 \
@@ -107,4 +107,4 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
   agent.overlong_filter=True \
   agent.trajectory_timeout=1800 \
   agent.async_engine=True \
-  trainer.total_epochs=1000
+  trainer.total_epochs=500
