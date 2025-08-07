@@ -18,11 +18,7 @@ trap 'abort "Script failed at line $LINENO (command: $BASH_COMMAND)"' ERR
 
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-
-# AZ_CLIENT_ID="7020352e-2535-4532-99b8-18e99901af1b"
-AZ_CLIENT_ID="7b009a27-5912-4556-8f17-0d3d707778ec"
 az login --identity --client-id "$AZ_CLIENT_ID"
-
 
 # ---- Install Kubernetes CLI (kubectl) ---------------------------------------
 
