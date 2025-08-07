@@ -57,14 +57,11 @@ if [ "$NODE_RANK" -eq 0 ]; then
       active_nodes=`python3 -c 'import ray; ray.init(); print(sum(node["Alive"] for node in ray.nodes()))'`
       if [ $active_nodes -eq $NODES ]; then
         echo "All ray workers are active and the ray cluster is initialized successfully."
-        exit 0
       fi
       echo "Wait for all ray workers to be active. $active_nodes/$NODES is active"
       sleep 5s;
   done
 
-  echo "Ray cluster initialized."
-  ray status
 
   MODEL_NAME=$(echo "${MODEL}" | tr '/.' '__')
   EXPERIMENT_NAME="${MODEL_NAME}_${DATASET}_bs${TRAIN_BS}_r${ROLLOUTS}"
