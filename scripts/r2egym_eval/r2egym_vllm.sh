@@ -19,7 +19,7 @@ until curl -fsS http://127.0.0.1:8000/health >/dev/null; do sleep 0.5; done
 
 python src/r2egym/agenthub/run/edit.py runagent_multiple \
   --traj_dir "$LOG_DIR" \
-  --max_workers 10 \
+  --max_workers 20 \
   --start_idx 0 \
   --k 500 \
   --dataset R2E-Gym/SWE-Bench-Verified \
