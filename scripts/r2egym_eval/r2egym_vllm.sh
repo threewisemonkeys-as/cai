@@ -24,7 +24,7 @@ python src/r2egym/agenthub/run/edit.py runagent_multiple \
   --k 500 \
   --dataset R2E-Gym/SWE-Bench-Verified \
   --split test \
-  --llm_name "vllm_hosted/$MODEL_NAME" \
+  --llm_name "hosted_vllm/$MODEL_NAME" \
   --use_fn_calling False \
   --exp_name r2egym-qwen3_8b-swebv-eval \
   --temperature 0 \
