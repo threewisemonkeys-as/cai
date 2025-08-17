@@ -9,10 +9,25 @@ LOG_DIR="$2"
 
 cd R2E-Gym
 
+# Detect number of GPUs
+if command -v nvidia-smi >/dev/null 2>&1; then
+    GPU_COUNT=$(nvidia-smi --list-gpus | wc -l)
+else
+    echo "Warning: nvidia-smi not found, defaulting to 1 GPU" >&2
+    GPU_COUNT=1
+fi
+
+echo "Detected $GPU_COUNT GPU(s)"
+
 # make sure children die if the script exits
 trap 'kill -TERM ${pid1:-} ${pid2:-} 2>/dev/null || true' EXIT
 
-vllm serve "$MODEL_NAME" & pid1=$!
+# Start vLLM with tensor parallelism based on GPU count
+if [[ $GPU_COUNT -gt 1 ]]; then
+    vllm serve "$MODEL_NAME" --tensor-parallel-size "$GPU_COUNT" & pid1=$!
+else
+    vllm serve "$MODEL_NAME" & pid1=$!
+fi
 
 # wait for vLLM to be ready (port 8000)
 until curl -fsS http://127.0.0.1:8000/health >/dev/null; do sleep 0.5; done
