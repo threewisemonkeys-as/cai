@@ -120,8 +120,8 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
-    trainer.save_freq=50 \
-    trainer.test_freq=50 \
+    trainer.save_freq=5 \
+    trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=${EXP_LOG_DIR} \
     env.name=swe \
