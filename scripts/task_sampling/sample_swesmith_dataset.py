@@ -160,6 +160,7 @@ def main():
             "PASS_TO_PASS": row["PASS_TO_PASS"],
             "created_at": row["created_at"],
             "image_name": row["image_name"],
+            "base_commit": row["base_commit"],
             "problem_statement": row["problem_statement"]
         })
     
