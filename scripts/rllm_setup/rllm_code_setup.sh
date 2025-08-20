@@ -2,7 +2,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 git clone https://github.com/threewisemonkeys-as/R2E-Gym.git
 cd R2E-Gym
-git checkout rllm2
+git checkout rllm3
 git submodule update --init --recursive
 pip install --user -e .
 cd ..
@@ -13,3 +13,5 @@ git submodule update --init --recursive
 pip install --user -e ./verl[vllm]
 pip install --user -e .
 cd ..
+# https://github.com/BerriAI/litellm/issues/13711
+pip install -U --user openai==1.99.5
