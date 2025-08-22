@@ -17,7 +17,7 @@ vllm serve "$MODEL_NAME" & pid1=$!
 # wait for vLLM to be ready (port 8000)
 until curl -fsS http://127.0.0.1:8000/health >/dev/null; do sleep 0.5; done
 
-python src/r2egym/agenthub/run/edit.py runagent_multiple \
+python3 src/r2egym/agenthub/run/edit.py runagent_multiple \
   --traj_dir "$LOG_DIR" \
   --max_workers 20 \
   --start_idx 0 \

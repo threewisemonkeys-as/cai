@@ -71,8 +71,8 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
   python3 -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
-    data.train_files=${DATA_DIR}/rl_tasks/${DATASET}_train.json \
-    data.val_files=${DATA_DIR}/rl_tasks/${DATASET}_valid.json \
+    data.train_files=rllm/rllm/data/datasets/d1/train_verl.parquet \
+    data.val_files=rllm/rllm/data/datasets/valid_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=100 \
     data.max_prompt_length=6500 \
