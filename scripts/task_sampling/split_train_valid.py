@@ -61,7 +61,8 @@ def main():
     datasets = {
         "buggen": base_dir / "buggen_2000.json",
         "r2egym": base_dir / "r2egym_2000.json", 
-        "swesmith": base_dir / "swesmith_2000.json"
+        "swesmith": base_dir / "swesmith_2000.json",
+        "featadd": base_dir / "featadd_1065.json"
     }
     
     print("Processing datasets...")
