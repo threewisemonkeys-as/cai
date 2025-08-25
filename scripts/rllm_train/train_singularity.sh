@@ -71,8 +71,8 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
   python3 -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
-    data.train_files=/vllm-workspace/rllm/rllm/data/datasets/d1/train_verl.parquet \
-    data.val_files=/mnt/data/SWE_Bench_Verified/test_verl.parquet \
+    data.train_files=${DATA_DIR}/${DATASET}/train_verl.parquet \
+    data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=50 \
     data.max_prompt_length=6500 \
@@ -82,7 +82,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
     actor_rollout_ref.model.path=${MODEL} \
     actor_rollout_ref.hybrid_engine=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.model.use_remove_padding=False \
+    actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-sum \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
