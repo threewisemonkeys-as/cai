@@ -5,6 +5,8 @@ Samples 1000 training and 25 validation data points from each dataset.
 Saves each split and each dataset individually into json files.
 Also adds 'ds_name' field to each data point based on the dataset.
 Also ensures both 'image_name' and 'docker_image' fields exist in each data point.
+Also fixes 'base_commit' field for swesmith, buggen (d3), and featadd (d4) datasets only:
+saves original value to 'base_commit_original' and sets to 'main'. NOT applied to r2egym.
 """
 
 import json
@@ -85,6 +87,33 @@ def add_ds_name_to_dataset(data: List[Dict[str, Any]], ds_name: str) -> List[Dic
     return transformed_data
 
 
+def fix_base_commit_in_data_point(data_point: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fix base_commit field in a single data point.
+    If base_commit exists, save original value to base_commit_original and set to "main".
+    If base_commit doesn't exist, create it with value "main".
+    
+    Args:
+        data_point: Dictionary representing a single data point
+        
+    Returns:
+        Data point with fixed base_commit field
+    """
+    # Create a copy to avoid modifying the original
+    transformed = data_point.copy()
+    
+    if "base_commit" in transformed:
+        # If base_commit exists and is not already "main", save original and set to "main"
+        if transformed["base_commit"] != "main":
+            transformed["base_commit_original"] = transformed["base_commit"]
+            transformed["base_commit"] = "main"
+    else:
+        # If base_commit doesn't exist, create it with value "main"
+        transformed["base_commit"] = "main"
+    
+    return transformed
+
+
 def ensure_image_fields_in_data_point(data_point: Dict[str, Any]) -> Dict[str, Any]:
     """
     Ensure both 'image_name' and 'docker_image' fields exist in a data point.
@@ -111,6 +140,44 @@ def ensure_image_fields_in_data_point(data_point: Dict[str, Any]) -> Dict[str, A
     # If both exist or neither exists, leave unchanged
     
     return transformed
+
+
+def fix_base_commit_in_dataset(data: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Fix base_commit field in all data points of a dataset.
+    
+    Args:
+        data: List of data points
+        
+    Returns:
+        Tuple of (transformed_data, stats_dict)
+    """
+    transformed_data = []
+    stats = {
+        'modified_base_commit': 0,
+        'created_base_commit': 0,
+        'already_main': 0
+    }
+    
+    for data_point in data:
+        if isinstance(data_point, dict):
+            original_data = data_point.copy()
+            transformed_point = fix_base_commit_in_data_point(data_point)
+            transformed_data.append(transformed_point)
+            
+            # Count transformations
+            if "base_commit" in original_data:
+                if original_data["base_commit"] != "main":
+                    stats['modified_base_commit'] += 1
+                else:
+                    stats['already_main'] += 1
+            else:
+                stats['created_base_commit'] += 1
+        else:
+            # If it's not a dict, keep as is
+            transformed_data.append(data_point)
+    
+    return transformed_data, stats
 
 
 def ensure_image_fields_in_dataset(data: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
@@ -181,6 +248,18 @@ def sample_train_valid(data, train_size=1000, valid_size=25, dataset_name=None):
     """
     if len(data) < train_size + valid_size:
         raise ValueError(f"Dataset has only {len(data)} items, but need {train_size + valid_size}")
+    
+    # Fix base_commit fields - only for swesmith, buggen (d3), and featadd (d4), NOT r2egym
+    if dataset_name and dataset_name.lower() in ['swesmith', 'buggen', 'featadd']:
+        data, base_commit_stats = fix_base_commit_in_dataset(data)
+        print(f"Base commit field transformations for {dataset_name}:")
+        print(f"  Modified existing base_commit to 'main': {base_commit_stats['modified_base_commit']} data points")
+        print(f"  Created new base_commit='main': {base_commit_stats['created_base_commit']} data points")
+        print(f"  Already had base_commit='main': {base_commit_stats['already_main']} data points")
+    elif dataset_name and dataset_name.lower() == 'r2egym':
+        print(f"Skipping base_commit transformations for {dataset_name} (not applicable)")
+    else:
+        print("No dataset name specified - skipping base_commit transformations")
     
     # Ensure image fields exist in all data points
     data, image_stats = ensure_image_fields_in_dataset(data)
