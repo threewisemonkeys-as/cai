@@ -71,7 +71,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
   python3 -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
-    data.train_files=/vllm-workspace/rllm/rllm/data/datasets/d1/train_verl.parquet \
+    data.train_files=/workspace/rllm/rllm/data/datasets/d1/train_verl.parquet \
     data.val_files=/mnt/data/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=50 \
@@ -104,7 +104,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
     actor_rollout_ref.rollout.chat_scheduler=verl.schedulers.completions_scheduler.CompletionsScheduler \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=1.0 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.n=${ROLLOUTS} \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0 \
