@@ -43,25 +43,25 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
 
 # Start Ray cluster manually
-# ray_init_timeout=300  # Default timeout for Ray initialization in seconds.
-# ray_port=6379  # Port used by the Ray head node.
-# HEAD_NODE_ADDRESS="${MASTER_ADDR}:${ray_port}"
+ray_init_timeout=300  # Default timeout for Ray initialization in seconds.
+ray_port=6379  # Port used by the Ray head node.
+HEAD_NODE_ADDRESS="${MASTER_ADDR}:${ray_port}"
 
-# if [ "$NODE_RANK" -eq 0 ]; then
-#   # Head node
-#   ray start --head --port=${ray_port}
-#   ray status
+if [ "$NODE_RANK" -eq 0 ]; then
+  # Head node
+  ray start --head --port=${ray_port}
+  ray status
 
-#   # Poll Ray until every worker node is active.
-#   for (( i=0; i < $ray_init_timeout; i+=5 )); do
-#       active_nodes=`python3 -c 'import ray; ray.init(); print(sum(node["Alive"] for node in ray.nodes()))'`
-#       if [ $active_nodes -eq $NODES ]; then
-#         echo "All ray workers are active and the ray cluster is initialized successfully."
-#         break
-#       fi
-#       echo "Wait for all ray workers to be active. $active_nodes/$NODES is active"
-#       sleep 5s;
-#   done
+  # Poll Ray until every worker node is active.
+  for (( i=0; i < $ray_init_timeout; i+=5 )); do
+      active_nodes=`python3 -c 'import ray; ray.init(); print(sum(node["Alive"] for node in ray.nodes()))'`
+      if [ $active_nodes -eq $NODES ]; then
+        echo "All ray workers are active and the ray cluster is initialized successfully."
+        break
+      fi
+      echo "Wait for all ray workers to be active. $active_nodes/$NODES is active"
+      sleep 5s;
+  done
 
 
   MODEL_NAME=$(echo "${MODEL}" | tr '/.' '__')
