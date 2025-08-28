@@ -46,6 +46,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 ray_init_timeout=300  # Default timeout for Ray initialization in seconds.
 ray_port=6379  # Port used by the Ray head node.
 HEAD_NODE_ADDRESS="${MASTER_ADDR}:${ray_port}"
+NODE_RANK="${NODE_RANK:-${RANK:-0}}"
 
 if [ "$NODE_RANK" -eq 0 ]; then
   # Head node
