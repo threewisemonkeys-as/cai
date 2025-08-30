@@ -72,7 +72,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
 
   python3 -m rllm.trainer.verl.train_agent_ppo \
     algorithm.adv_estimator=loop \
-    data.train_files=/workspace/rllm/rllm/data/datasets/d1/train_verl.parquet \
+    data.train_files=/mnt/data/rllm/rllm/data/datasets/d1/train_verl.parquet \
     data.val_files=/mnt/data/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=50 \
