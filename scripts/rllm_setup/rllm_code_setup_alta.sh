@@ -6,10 +6,16 @@ git checkout fixed-data-alta-cluster
 git submodule update --init --recursive
 pip install --user -e .
 cd ..
-git clone https://github.com/threewisemonkeys-as/rllm.git
+git clone 
 cd rllm
+git remote set-url origin https://github.com/threewisemonkeys-as/rllm.git
 git checkout rllm2 
-git submodule update --init --recursive
+rm -r verl 
+git clone https://github.com/threewisemonkeys-as/verl.git
+cd verl
+git fetch 
+git checkout main 
+cd ..
 pip install --user -e ./verl[vllm]
 pip install --user -e .
 cd ..
