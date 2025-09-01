@@ -9,7 +9,6 @@ cd ..
 git clone 
 cd rllm
 git remote set-url origin https://github.com/threewisemonkeys-as/rllm.git
-git checkout rllm2 
 rm -r verl 
 git clone https://github.com/threewisemonkeys-as/verl.git
 cd verl
