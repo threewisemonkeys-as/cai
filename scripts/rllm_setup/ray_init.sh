@@ -13,6 +13,8 @@ GPUS_PER_NODE=$2
 ray_init_timeout=300  # Default timeout for Ray initialization in seconds.
 ray_port=6379  # Port used by the Ray head node.
 HEAD_NODE_ADDRESS="${MASTER_ADDR}:${ray_port}"
+# Prefer existing NODE_RANK, else RANK, else 0
+NODE_RANK="${NODE_RANK:-${RANK:-0}}"
 
 if [ "$NODE_RANK" -eq 0 ]; then
   # Head node
