@@ -122,7 +122,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
     trainer.save_freq=5 \
-    trainer.test_freq=10 \
+    trainer.test_freq=50 \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=${EXP_LOG_DIR} \
     env.name=swe \
@@ -136,9 +136,12 @@ if [ "$NODE_RANK" -eq 0 ]; then
 else
   # Worker node - retry until connection succeeds or timeout expires
   for (( i=0; i < $ray_init_timeout; i+=5 )); do
-    ray start --address="${HEAD_NODE_ADDRESS}" --block
+
+    MASTER_IP=$(python3 -c "import socket; print(socket.gethostbyname('$MASTER_ADDR'))")
+    NEW_HEAD_NODE_ADDRESS="${MASTER_IP}:${ray_port}"
+    ray start --address="${NEW_HEAD_NODE_ADDRESS}"
     if [ $? -eq 0 ]; then
-      echo "Worker: Ray runtime started with head address ${HEAD_NODE_ADDRESS}"
+      echo "Worker: Ray runtime started with head address ${NEW_HEAD_NODE_ADDRESS}"
       ray status
       exit 0
     fi
@@ -146,6 +149,6 @@ else
     sleep 5s;
   done
 
-  echo "Ray worker start timeout, head address: ${HEAD_NODE_ADDRESS}"
+  echo "Ray worker start timeout, head address: ${NEW_HEAD_NODE_ADDRESS}"
   exit 1
 fi
