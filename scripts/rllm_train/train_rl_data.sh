@@ -8,6 +8,8 @@ usage () {
   exit 1
 }
 
+echo $KUBE_CONFIG_PATH
+
 while getopts "m:d:b:r:n:g:t:u:" opt; do
   case "$opt" in
     m) MODEL=$OPTARG ;;
