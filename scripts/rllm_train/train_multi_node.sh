@@ -129,7 +129,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     agent.name=sweagent \
     agent.max_steps=50 \
     agent.overlong_filter=True \
-    agent.trajectory_timeout=5400 \
+    agent.trajectory_timeout=1500 \
     agent.async_engine=True \
     trainer.total_epochs=1000
 

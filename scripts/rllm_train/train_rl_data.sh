@@ -129,7 +129,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
     agent.name=sweagent \
     agent.max_steps=50 \
     agent.overlong_filter=True \
-    agent.trajectory_timeout=1800 \
+    agent.trajectory_timeout=1500 \
     agent.async_engine=True \
     trainer.total_epochs=500
 
