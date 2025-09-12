@@ -75,7 +75,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     data.train_files=${DATA_DIR}/${DATASET}/train_verl.parquet \
     data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
-    data.val_batch_size=50 \
+    data.val_batch_size=$((${TRAIN_BS}*8)) \
     data.max_prompt_length=10000 \
     data.max_response_length=32768 \
     data.filter_overlong_prompts=True \
@@ -118,7 +118,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.logger=['console','wandb'] \
     trainer.project_name='cai_rl' \
     trainer.experiment_name=${EXPERIMENT_NAME} \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
     trainer.save_freq=5 \
