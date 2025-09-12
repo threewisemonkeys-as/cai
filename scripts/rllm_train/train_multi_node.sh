@@ -118,7 +118,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.logger=['console','wandb'] \
     trainer.project_name='cai_rl' \
     trainer.experiment_name=${EXPERIMENT_NAME} \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
     trainer.save_freq=5 \
@@ -127,9 +127,9 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.default_local_dir=${EXP_LOG_DIR} \
     env.name=swe \
     agent.name=sweagent \
-    agent.max_steps=50 \
+    agent.max_steps=100 \
     agent.overlong_filter=True \
-    agent.trajectory_timeout=1500 \
+    agent.trajectory_timeout=3000 \
     agent.async_engine=True \
     trainer.total_epochs=1000
 
