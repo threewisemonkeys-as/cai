@@ -77,7 +77,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=100 \
     data.max_prompt_length=10000 \
-    data.max_response_length=32768 \
+    data.max_response_length=65000 \
     data.filter_overlong_prompts=True \
     data.filter_overlong_prompts_workers=1 \
     actor_rollout_ref.model.path=${MODEL} \
