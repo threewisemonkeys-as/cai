@@ -3,17 +3,16 @@ set -euo pipefail
 set -x
 
 usage () {
-  echo "Usage: $0 -m MODEL -d DATASET -b TRAIN_BS -r ROLLOUTS \
+  echo "Usage: $0 -m MODEL -d DATASET -b EVAL_BS \
 -n NODES -g GPUS_PER_NODE [-t TP] [-u USP] DATA_DIR LOG_DIR" >&2
   exit 1
 }
 
-while getopts "m:d:b:r:n:g:t:u:" opt; do
+while getopts "m:d:b:n:g:t:u:" opt; do
   case "$opt" in
     m) MODEL=$OPTARG ;;
     d) DATASET=$OPTARG ;;
-    b) TRAIN_BS=$OPTARG ;;
-    r) ROLLOUTS=$OPTARG ;;
+    b) EVAL_BS=$OPTARG ;;
     n) NODES=$OPTARG ;;
     g) GPUS_PER_NODE=$OPTARG ;;
     t) TP=$OPTARG ;;
@@ -27,7 +26,7 @@ DATA_DIR=${1:?DATA_DIR missing}
 LOG_DIR=${2:?LOG_DIR missing}
 
 # mandatory 
-for v in MODEL DATASET TRAIN_BS ROLLOUTS NODES GPUS_PER_NODE; do
+for v in MODEL DATASET EVAL_BS NODES GPUS_PER_NODE; do
   [[ -z "${!v:-}" ]] && { echo "ERROR: $v not set" >&2; usage; }
 done
 
@@ -66,7 +65,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
 
 
   MODEL_NAME=$(echo "${MODEL}" | tr '/.' '__')
-  EXPERIMENT_NAME="${MODEL_NAME}_${DATASET}_bs${TRAIN_BS}_r${ROLLOUTS}"
+  EXPERIMENT_NAME="${MODEL_NAME}_${DATASET}_eval"
   EXP_LOG_DIR="${LOG_DIR}/${EXPERIMENT_NAME}"
   mkdir -p "${EXP_LOG_DIR}"
 
@@ -74,8 +73,8 @@ if [ "$NODE_RANK" -eq 0 ]; then
     algorithm.adv_estimator=loop \
     data.train_files=${DATA_DIR}/${DATASET}/train_verl.parquet \
     data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
-    data.train_batch_size=${TRAIN_BS} \
-    data.val_batch_size=100 \
+    data.train_batch_size=8 \
+    data.val_batch_size=${EVAL_BS} \
     data.max_prompt_length=10000 \
     data.max_response_length=65000 \
     data.filter_overlong_prompts=True \
@@ -106,7 +105,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
-    actor_rollout_ref.rollout.n=${ROLLOUTS} \
+    actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
