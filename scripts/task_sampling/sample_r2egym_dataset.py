@@ -15,18 +15,23 @@ class R2EGymDatasetSampler:
     A class for creating balanced samples from the R2E-Gym-Lite dataset.
     """
     
-    def __init__(self, dataset_name: str = "R2E-Gym/R2E-Gym-Lite", split: str = "train"):
+    def __init__(self, dataset_name: str = "R2E-Gym/R2E-Gym-Lite", split: str = "train", exclude_folder: Optional[str] = None):
         """
         Initialize the R2E-Gym dataset sampler.
         
         Args:
             dataset_name: HuggingFace dataset identifier
             split: Dataset split to load (train, test, validation)
+            exclude_folder: Path to folder containing JSON files with data points to exclude
         """
         self.dataset_name = dataset_name
         self.split = split
+        self.exclude_folder = exclude_folder
         self.dataset = None
+        self.excluded_ids = set()
         self._load_dataset()
+        if exclude_folder:
+            self._load_excluded_ids()
     
     def _load_dataset(self):
         """Load the dataset from HuggingFace."""
@@ -39,11 +44,86 @@ class R2EGymDatasetSampler:
             sample_keys = list(self.dataset[0].keys())
             print(f"Available fields: {sample_keys}")
     
+    def _load_excluded_ids(self):
+        """Load data point IDs from JSON files in the exclude folder."""
+        if not self.exclude_folder or not os.path.exists(self.exclude_folder):
+            print(f"Warning: Exclude folder '{self.exclude_folder}' does not exist")
+            return
+        
+        exclude_path = Path(self.exclude_folder)
+        json_files = list(exclude_path.glob("*.json"))
+        
+        if not json_files:
+            print(f"No JSON files found in exclude folder: {self.exclude_folder}")
+            return
+        
+        print(f"Loading excluded data points from {len(json_files)} JSON files...")
+        
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r') as f:
+                    data = json.load(f)
+                
+                # Handle both single object and list of objects
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = [data]
+                
+                # Extract unique IDs from each item
+                for item in items:
+                    if isinstance(item, dict):
+                        unique_id = self._generate_unique_id(item)
+                        if unique_id:
+                            self.excluded_ids.add(unique_id)
+                            
+            except Exception as e:
+                print(f"Error loading {json_file}: {e}")
+        
+        print(f"Loaded {len(self.excluded_ids)} data points to exclude")
+    
+    def _generate_unique_id(self, task: Dict) -> str:
+        """Generate a unique identifier for a task using docker_image and problem_statement tokens."""
+        docker_image = task.get('docker_image', '')
+        problem_statement = task.get('problem_statement', '')
+        
+        if not docker_image or not problem_statement:
+            # Fallback to traditional ID fields if docker_image or problem_statement is missing
+            for id_field in ['instance_id', 'id', 'task_id', 'problem_id']:
+                if id_field in task and task[id_field] is not None:
+                    return str(task[id_field])
+            
+            # Last resort: use entire item as string
+            return json.dumps(task, sort_keys=True)
+        
+        # Tokenize problem_statement and take first 20 tokens
+        tokens = problem_statement.split()[:20]
+        problem_prefix = ' '.join(tokens)
+        
+        # Combine docker_image and problem statement prefix
+        unique_id = f"{docker_image}||{problem_prefix}"
+        return unique_id
+    
+    def _should_exclude_task(self, task: Dict) -> bool:
+        """Check if a task should be excluded based on loaded exclusions."""
+        if not self.excluded_ids:
+            return False
+        
+        unique_id = self._generate_unique_id(task)
+        return unique_id in self.excluded_ids
+    
     def _apply_filters(self, tasks: List[Dict], filters: Dict) -> List[Dict]:
-        """Apply filters to the task list."""
+        """Apply filters to the task list and exclude tasks from excluded_ids."""
         filtered_tasks = []
+        excluded_count = 0
         
         for task in tasks:
+            # Check exclusions first
+            if self._should_exclude_task(task):
+                excluded_count += 1
+                continue
+            
+            # Then check other filters
             match = True
             for field, value in filters.items():
                 if field not in task:
@@ -57,6 +137,9 @@ class R2EGymDatasetSampler:
             
             if match:
                 filtered_tasks.append(task)
+        
+        if excluded_count > 0:
+            print(f"Excluded {excluded_count} tasks based on exclusion list")
         
         return filtered_tasks
     
@@ -84,7 +167,9 @@ class R2EGymDatasetSampler:
         
         # Apply filters if provided
         available_tasks = list(self.dataset)
-        if filters:
+        if filters or self.excluded_ids:
+            if filters is None:
+                filters = {}
             available_tasks = self._apply_filters(available_tasks, filters)
         
         # Sample random tasks
@@ -216,6 +301,11 @@ class R2EGymDatasetSampler:
                 remaining_tasks = [task for task in remaining_tasks 
                                  if task.get(id_field) not in existing_ids]
             
+            # Also exclude tasks from the exclusion list
+            if self.excluded_ids:
+                remaining_tasks = [task for task in remaining_tasks 
+                                 if not self._should_exclude_task(task)]
+            
             if len(remaining_tasks) >= shortage:
                 additional_samples = self.sample_random_tasks(
                     n_samples=shortage,
@@ -259,6 +349,12 @@ def parse_args():
         help="Path to save the output JSON file"
     )
     
+    parser.add_argument(
+        "--exclude_folder",
+        type=str,
+        help="Path to folder containing JSON files with R2E-Gym data points to exclude from sampling"
+    )
+    
     return parser.parse_args()
 
 
@@ -267,7 +363,7 @@ def main():
     args = parse_args()
     
     # Initialize sampler
-    sampler = R2EGymDatasetSampler()
+    sampler = R2EGymDatasetSampler(exclude_folder=args.exclude_folder)
     
     # Create balanced sample
     samples = sampler.create_balanced_sample(
@@ -282,6 +378,8 @@ def main():
     print(f"\n=== Sampling Complete ===")
     print(f"Total samples: {len(samples)}")
     print(f"Output saved to: {args.output_path}")
+    if args.exclude_folder:
+        print(f"Excluded data points from folder: {args.exclude_folder}")
 
 
 if __name__ == "__main__":

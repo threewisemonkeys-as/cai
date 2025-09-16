@@ -41,6 +41,8 @@ def determine_ds_name(dataset_name: str) -> str:
         return "d3"
     elif dataset_name_lower == 'featadd':
         return "d4"
+    elif dataset_name_lower == 'r2egym_prime':
+        return "r2egym_prime"
     else:
         raise ValueError(f"Unknown dataset name: {dataset_name}. Expected swesmith, r2egym, buggen, or featadd")
 
@@ -256,7 +258,7 @@ def sample_train_valid(data, train_size=1000, valid_size=25, dataset_name=None):
         print(f"  Modified existing base_commit to 'main': {base_commit_stats['modified_base_commit']} data points")
         print(f"  Created new base_commit='main': {base_commit_stats['created_base_commit']} data points")
         print(f"  Already had base_commit='main': {base_commit_stats['already_main']} data points")
-    elif dataset_name and dataset_name.lower() == 'r2egym':
+    elif dataset_name and dataset_name.lower() in ['r2egym', "r2egym_prime"]:
         print(f"Skipping base_commit transformations for {dataset_name} (not applicable)")
     else:
         print("No dataset name specified - skipping base_commit transformations")
@@ -295,10 +297,11 @@ def main():
     
     # Dataset files
     datasets = {
-        "buggen": base_dir / "buggen_2000.json",
-        "r2egym": base_dir / "r2egym_2000.json", 
-        "swesmith": base_dir / "swesmith_2000.json",
-        "featadd": base_dir / "featadd_1065.json"
+        # "buggen": base_dir / "buggen_2000.json",
+        # "r2egym": base_dir / "r2egym_2000.json", 
+        # "swesmith": base_dir / "swesmith_2000.json",
+        # "featadd": base_dir / "featadd_1065.json"
+        "r2egym_prime": base_dir / "r2egym_prime_2000.json", 
     }
     
     print("Processing datasets...")
