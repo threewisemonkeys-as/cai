@@ -77,7 +77,8 @@ if [ "$NODE_RANK" -eq 0 ]; then
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=100 \
     data.max_prompt_length=10000 \
-    data.max_response_length=65000 \
+    data.max_response_length=65536 \
+    data.max_train_response_length=32768 \
     data.filter_overlong_prompts=True \
     data.filter_overlong_prompts_workers=1 \
     actor_rollout_ref.model.path=${MODEL} \
@@ -90,7 +91,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=75000 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
