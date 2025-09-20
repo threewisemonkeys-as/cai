@@ -69,7 +69,7 @@ def problem_statement_gen(
     )
     new_instances = []
     for instance in instances:
-        del instance["problem_description"]
+        del instance["problem_statement"]
         with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
             issue_generator.generate_issue(instance, 0, fp)
             fp.flush()
