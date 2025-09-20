@@ -4,7 +4,9 @@ import logging
 import os
 import json
 import yaml
+from tqdm import tqdm
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 from datasets import load_dataset
@@ -58,35 +60,70 @@ def problem_statement_gen(
     instances: list[dict],
     model_name: str,
     run_id: str,
+    n_workers: int = 4,  # Add n_workers parameter
 ) -> list[dict]:
 
+    def process_instance(instance_data):
+        """Process a single instance"""
+        instance, issue_generator = instance_data
+        instance_copy = instance.copy()
+        try:
+            if "problem_statement" in instance_copy:
+                del instance_copy["problem_statement"]
+            with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
+                issue_generator.generate_issue(instance_copy, 0, fp)
+                fp.flush()
+                fp.seek(0)
+                new_instance = json.load(fp)
+
+            new_instance |= instance
+            return new_instance
+        except FileNotFoundError as e:
+            logger.warning(f"File not found: {e}\n This may because this particular instance is generated from another machine. Skipping this instance.")
+            return None
+        except Exception as e:
+            logger.error(f"Error processing instance {instance.get('id', 'unknown')}: {e}")
+            return None
 
     issue_generator = CustomIssueGen(
         model=model_name,
         use_existing=True,
-        n_workers=1,
+        n_workers=n_workers,
         experiment_id=run_id,
     )
+    
+    # Create data for parallel processing
+    instance_data = [(instance, issue_generator) for instance in instances]
     new_instances = []
-    for instance in instances:
-        del instance["problem_statement"]
-        with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
-            issue_generator.generate_issue(instance, 0, fp)
-            fp.flush()
-            fp.seek(0)
-            new_instance = json.load(fp)
-
-        new_instance |= instance
-        new_instances.append(new_instance)
+    
+    if n_workers == 1:
+        # Sequential processing for single worker
+        for data in tqdm(instance_data, desc="Processing instances"):
+            result = process_instance(data)
+            if result is not None:
+                new_instances.append(result)
+    else:
+        # Parallel processing for multiple workers
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(process_instance, data) for data in instance_data]
+            
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing instances"):
+                try:
+                    result = future.result()
+                    if result is not None:
+                        new_instances.append(result)
+                except Exception as e:
+                    logger.error(f"Error in future result: {e}", exc_info=True)
+                    continue
+    
     return new_instances
-
-
 
 def main(
     input: Path | str,
     output: Path | str,
     model: str,
     run_id: str,
+    n_workers: int = 4,  # Add n_workers parameter with default
 ):
     if Path(output).exists():
         raise RuntimeError(f"File aready exists at: {output}")
@@ -96,6 +133,7 @@ def main(
         instances_data,
         model_name=model,
         run_id=run_id,
+        n_workers=n_workers,  # Pass n_workers to problem_statement_gen
     )
     json.dump(results, open(output, "w"), indent=2)
     
