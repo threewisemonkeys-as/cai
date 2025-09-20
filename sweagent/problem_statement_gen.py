@@ -94,7 +94,7 @@ def main(
     instances_data = json.load(open(input, "r"))
     results = problem_statement_gen(
         instances_data,
-        model=model,
+        model_name=model,
         run_id=run_id,
     )
     json.dump(results, open(output, "w"), indent=2)
