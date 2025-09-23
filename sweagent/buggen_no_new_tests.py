@@ -1,5 +1,6 @@
 import shutil
 import random
+import uuid
 from textwrap import shorten
 from datetime import datetime
 from pathlib import Path
@@ -94,7 +95,7 @@ def remove_added_test_files(patch: str) -> str:
     ]))
     
 
-def create_instance_id(image_name: str, seed: int) -> str:
+def create_instance_id(image_name: str, seed: str) -> str:
     _, arch, repo_name, short_commit_sha = image_name.split('.')
     return f"{repo_name}.{short_commit_sha}.sweagent_buggen.seed_{seed}"
 
@@ -287,7 +288,7 @@ def regular(
 
 
     image_names = Path(images).read_text().splitlines()
-    jobs_specs = [(i, s) for i in image_names for s in range(seed_per_image)]
+    jobs_specs = [(i, str(uuid.uuid4())[:10]) for i in image_names for _ in range(seed_per_image)]
 
     if shuffle:
         random.shuffle(jobs_specs)
