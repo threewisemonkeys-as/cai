@@ -2,8 +2,7 @@ import json
 from pathlib import Path
 import random
 
-from unidiff import PatchSet
-from rich.console import Console
+
 from rich import print
 from rich.pretty import pprint
 from litellm import completion
@@ -36,7 +35,10 @@ def llm_summarise_conv(
                 batch_str = ''
                 for i, b in enumerate(batch):
                     batch_str += f'<idx_{i}>\n{b}\n</idx_{i}>\n\n'
-                summary_prompt = f"Provide a consice summary of the following -\n\n{batch_str}"
+                summary_prompt = f"""Provide a consice summary of the following.
+Attempt to generalise characteristics such as size, type and difficulty from the provided instance.
+
+{batch_str}"""
                 llm_repsonse = completion(
                     model=MODEL,
                     messages=[{"role": "user", "content": summary_prompt}],
@@ -52,68 +54,63 @@ def llm_summarise_conv(
 
 
 
-def get_non_test_patch(patch: str) -> str:
-    return str(PatchSet([
-        str(f) for f in PatchSet(patch)
-        if f.is_modified_file and f.path.endswith(".py") and not "test_" in f.path
-    ]))
-    
 
 
-def analyse(datasets: list[str], sample_n: int | None = None):
-    trajs_to_eval = []
+def analyse(data: list[dict], sample_n: int | None = None, k: int = 2):
+    base_summaries = []
+    for bug in random.sample(data, sample_n):   
+        if "patch" in bug:
+            patch = bug['patch']
+        elif "parsed_commit_content" in bug:
+            commit = ParsedCommit(**json.loads(bug['parsed_commit_content']))
+            patch = commit.get_patch()
+        else:        
+            raise RuntimeError(f"Count not find relevent key for patch in {dp.keys()}")
+        ps = bug['problem_statement']
+        prompt = f"""Your task is to summarise in brief the bug presented here.
 
-    for ds in datasets:
-        with open(ds, "r") as f:
-            data = []
-            for l in f.read().splitlines():
-                try:
-                    data.append(json.loads(l.strip()))
-                except json.JSONDecodeError:
-                    print("Skpping line due to decode error")
+<problem_description>
+{ps}
+</problem_description>
 
-        for traj in data:
-            if traj['reward'] != 1.0:
-                continue
-        
-            trajs_to_eval.append(traj)
+<patch>
+{patch}
+</patch>
 
+Considering the given problem description and patch, summarise the bug in brief, including characteristics such as size, difficulty and type of bug."""
+        llm_repsonse = completion(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        bs = llm_repsonse["choices"][0]["message"]["content"]
 
-    random.shuffle(trajs_to_eval)
+        base_summaries.append(bs)
 
-    differences = []
-    for traj in trajs_to_eval:
-        diff = llm_get_difference(traj)
-        if diff is not None: 
-            differences.append(diff)
-        
-        if len(differences) >= sample_n:
-            break
-    
-    return differences
+    results = llm_summarise_conv(base_summaries, k)    
+
+    return results
 
 
 def main():
-    dataset_root = Path("/home/msrt/atharv/data/collected_trajectories")
+    dataset_paths = [
+        "/home/msrt/data/rl_tasks/r2egym_train.json",
+        "/home/msrt/data/rl_tasks/swesmith_train.json",
+        "/home/msrt/data/rl_tasks/buggen_train.json",
+        "/home/msrt/data/rl_tasks/featadd_train.json",
+    ]
+
     cumsum_output_path = Path("/home/msrt/atharv/data/llm_cumsum.json")
 
-    console = Console()
-    dataset_paths = {
-        k: list(dataset_root.rglob(f"{k}/claude4/*.jsonl"))
-        for k in ["d1", "d2", "d3", "d4"]
-    }
     pprint(dataset_paths)
 
+    all_sums = {}
+    for d_path in dataset_paths:
+        data = json.load(open(d_path, "r"))
+        d_sums = analyse(data, sample_n=64, k=4)
+        all_sums[d_path] = d_sums
 
-    all_differences = {}
-    for d_name, d_paths in dataset_paths.items():
-        d_differences = analyse([str(p) for p in d_paths], sample_n=64)
-        all_differences[d_name] = d_differences
-
-    print(f"Writing differences to {diff_output_path}")
-    json.dump(all_differences, open(diff_output_path, "w"), indent=4)
-
-    all_differences = json.load(open(diff_output_path, "r"))
+    print(f"Writing summaries to {cumsum_output_path}")
+    json.dump(all_sums, open(cumsum_output_path, "w"), indent=4)
 
 
 if __name__ == "__main__":

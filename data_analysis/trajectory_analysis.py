@@ -201,12 +201,43 @@ def count_patch_stats(patch_str: str) -> tuple[int, int]:
     
     return files_modified_count, lines_modified_count
 
+def get_patch_file_overlap(
+    *patches
+) -> list[str]:
+    modified_files = []
+    for p in patches:
+        modified_files.append(set([
+            f.path for f in PatchSet(p)
+            if f.is_modified_file and f.path.endswith(".py") and not "test" in f.path
+        ]))
+    return list(set.intersection(*modified_files))
+
+
+def get_first_hit(
+    steps: list[dict],
+    patch: str,
+) -> int | None:
+    modified_files = [
+        f.path for f in PatchSet(patch) 
+        if f.is_modified_file and f.path.endswith(".py") and not "test" in f.path
+    ]
+    
+    for idx, step in enumerate(steps):
+        for mf in modified_files:
+            if mf in step['action']:
+                return idx
+            
+    return None
+
+
 
 def analyse(datasets: list[str]):
     pred_files_counts: list[int] = []
     pred_lines_counts: list[int] = []
     bug_files_counts: list[int] = []
     bug_lines_counts: list[int] = []
+    files_overlap: list[int] = []
+    first_hits: list[int] = []
     repo_counts = defaultdict(lambda: 0)
     instance_counts = defaultdict(lambda: 0)
     traj_count = 0
@@ -222,7 +253,7 @@ def analyse(datasets: list[str]):
                     print("Skpping line due to decode error")
 
         for traj in data:
-            if traj['reward'] != 1.0:
+            if traj['reward'] == 1.0:
                 continue
 
             traj_count += 1
@@ -245,6 +276,13 @@ def analyse(datasets: list[str]):
             pred_files_counts.append(pred_files_modified)
             pred_lines_counts.append(pred_lines_changed)
 
+            overlap_count = len(get_patch_file_overlap(pred_patch, bug_patch))
+            files_overlap.append(overlap_count)
+
+            first_hit = get_first_hit(traj['trajectory_steps'], bug_patch)
+            if first_hit is not None:
+                first_hits.append(first_hit)
+
             found_repo = False
             for possible_name in ["repo", "repo_name"]:
                 if possible_name in traj['ds']:
@@ -264,6 +302,10 @@ def analyse(datasets: list[str]):
         "bug_files_std": std(bug_files_counts),
         "bug_lines_mean": mean(bug_lines_counts),
         "bug_lines_std": std(bug_lines_counts),
+        "overlap_count_mean": mean(files_overlap),
+        "overlap_count_std": std(files_overlap), 
+        "first_hits_mean": mean(first_hits),
+        "first_hits_std": std(first_hits),
         "repo_counts": repo_counts,
         # Sorted descending counts per instance
         "instance_counts": list(sorted(instance_counts.values(), reverse=True)),
@@ -292,6 +334,8 @@ def main():
     table.add_column("pred_lines")
     table.add_column("bug_files")
     table.add_column("bug_lines")
+    table.add_column("overlap_files")
+    table.add_column("first_hit")
 
     for d_name, d_paths in dataset_paths.items():
         stats = analyse([str(p) for p in d_paths])
@@ -302,6 +346,8 @@ def main():
             f"{stats['pred_lines_std']:.2f}",
             f"{stats['bug_files_mean']:.2f}",
             f"{stats['bug_lines_std']:.2f}",
+            f"{stats["overlap_count_mean"]:.2f}",
+            f"{stats["first_hits_mean"]:.2f}",
         )
 
         # collect per-dataset for dashboard

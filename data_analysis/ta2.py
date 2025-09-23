@@ -10,7 +10,6 @@ from rich.pretty import pprint
 from r2egym.commit_models.diff_classes import ParsedCommit
 
 
-
 def count_patch_stats(patch_str: str) -> tuple[int, int]:
     """
     Count number of files modified and number of lines changed
