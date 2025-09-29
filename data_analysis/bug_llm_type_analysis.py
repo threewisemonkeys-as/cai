@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import random
 from collections import defaultdict
+from tqdm import tqdm
 
 
 from rich import print
@@ -98,7 +99,7 @@ def categorise(guide: str, data: list[dict], sample_n: int | None = None):
         samples = random.sample(data, sample_n)
     else:
         samples = data
-    for bug in samples:   
+    for bug in tqdm(samples):   
         if "patch" in bug:
             patch = bug['patch']
         elif "parsed_commit_content" in bug:
@@ -149,16 +150,18 @@ Alphabet code of category that bug falls into.
 
 def main():
     dataset_paths = [
-        "/home/msrt/data/rl_tasks/r2egym_train.json",
-        "/home/msrt/data/rl_tasks/swesmith_train.json",
-        "/home/msrt/data/rl_tasks/buggen_train.json",
-        "/home/msrt/data/rl_tasks/featadd_train.json",
+        "/home/msrt/atharv/data/clean_featadd_train.json",
+        # "/home/msrt/atharv/data/swebv.json",
+        # "/home/msrt/data/rl_tasks/r2egym_train.json",
+        # "/home/msrt/data/rl_tasks/swesmith_train.json",
+        # "/home/msrt/data/rl_tasks/buggen_train.json",
+        # "/home/msrt/data/rl_tasks/featadd_train.json",
     ]
 
     cumsum_output_path = Path("/home/msrt/atharv/data/llm_bugtype.json")
     summary_output_path = Path("/home/msrt/atharv/data/bug_types.txt")
-    cresults_output_path = Path("/home/msrt/atharv/data/full_bug_type_results.json")
-    bug_type_counts_output_path = Path("/home/msrt/atharv/data/bug_type_counts.json")
+    cresults_output_path = Path("/home/msrt/atharv/data/clean_featadd_bug_type_results.json")
+    bug_type_counts_output_path = Path("/home/msrt/atharv/data/clean_featadd_bug_type_counts.json")
 
     pprint(dataset_paths)
 
@@ -205,7 +208,7 @@ def main():
     bug_counts = {}
     for d_path in dataset_paths:
         data = json.load(open(d_path, "r"))
-        cresults = categorise(guide, data, sample_n=512)
+        cresults = categorise(guide, data, sample_n=500)
         full_bug_type_results[d_path] = cresults
 
         ccounts = defaultdict(lambda: 0)
