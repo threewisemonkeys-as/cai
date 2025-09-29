@@ -2,17 +2,26 @@ import json
 from pathlib import Path
 import random
 from collections import defaultdict
-from tqdm import tqdm
+import os
 
+from tqdm import tqdm
 
 from rich import print
 from rich.pretty import pprint
 from litellm import completion
+from tqdm import tqdm
 
 from r2egym.commit_models.diff_classes import ParsedCommit
 
+from dotenv import load_dotenv
+load_dotenv()
 
-MODEL = "openai/gpt-5-mini-2025-08-07"
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+AZURE_AD_TOKEN_PROVIDER = get_bearer_token_provider(DefaultAzureCredential(), os.getenv("AZURE_API_SCOPE", None))
+
+MODEL = "azure/gpt-5_2025-08-07"
+# MODEL = "openai/gpt-5-mini-2025-08-07"
 
 def get_batches(seq: list[str], n: int):
     for i in range(0, len(seq), n):
@@ -43,6 +52,7 @@ def llm_summarise_conv(
                 llm_repsonse = completion(
                     model=MODEL,
                     messages=[{"role": "user", "content": summary_prompt}],
+                    azure_ad_token_provider=AZURE_AD_TOKEN_PROVIDER,
                 )
                 summary = llm_repsonse["choices"][0]["message"]["content"]
                 if summary is not None:
@@ -82,6 +92,7 @@ Considering the given problem description and patch, summarise the bug in brief,
         llm_repsonse = completion(
             model=MODEL,
             messages=[{"role": "user", "content": prompt}],
+            azure_ad_token_provider=AZURE_AD_TOKEN_PROVIDER,
         )
         bs = llm_repsonse["choices"][0]["message"]["content"]
 
@@ -134,6 +145,7 @@ Alphabet code of category that bug falls into.
         llm_repsonse = completion(
             model=MODEL,
             messages=[{"role": "user", "content": prompt}],
+            azure_ad_token_provider=AZURE_AD_TOKEN_PROVIDER,
         )
         bs = llm_repsonse["choices"][0]["message"]["content"]
 
@@ -162,7 +174,6 @@ def main():
     summary_output_path = Path("/home/msrt/atharv/data/bug_types.txt")
     cresults_output_path = Path("/home/msrt/atharv/data/clean_featadd_bug_type_results.json")
     bug_type_counts_output_path = Path("/home/msrt/atharv/data/clean_featadd_bug_type_counts.json")
-
     pprint(dataset_paths)
 
     # all_sums = {}
@@ -197,6 +208,7 @@ def main():
 #     llm_response = completion(
 #         "openai/gpt-5",
 #         messages=[{"role": "user", "content": prompt}],
+#         azure_ad_token_provider=AZURE_AD_TOKEN_PROVIDER,
 #     )
 #     summary = llm_response["choices"][0]["message"]["content"]        
 

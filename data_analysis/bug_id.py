@@ -104,20 +104,16 @@ def collect_stats(data_path: Path):
 def main():
 
     data_paths = [
-        # "/home/msrt/atharv/data/clean_featadd_train.json",
-        # "/home/msrt/data/rl_tasks/r2egym_train.json",
+        "/home/msrt/data/rl_tasks/r2egym_train.json",
         "/home/msrt/data/rl_tasks/swesmith_train.json",
-        # "/home/msrt/data/rl_tasks/buggen_train.json",
-        # "/home/msrt/data/rl_tasks/featadd_train.json",
+        "/home/msrt/data/rl_tasks/buggen_train.json",
+        "/home/msrt/data/rl_tasks/featadd_train.json",
     ]
 
 
     for data_path in data_paths:
         data_path = Path(data_path)
         res = collect_stats(data_path)
-        breakpoint()
-
-
 
 
 if __name__ == '__main__':
