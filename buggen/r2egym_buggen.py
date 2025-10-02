@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 AZURE_AD_TOKEN_PROVIDER = get_bearer_token_provider(DefaultAzureCredential(), os.getenv("AZURE_API_SCOPE", None))
 
-BACKEND = "docker"
+# BACKEND = "docker"
+BACKEND = "kubernetes"
 
 
 ISSUE_GEN_CONFIG_FILE_PATH = CUR_DIR / Path("sans_patch_issue_gen.yaml")
@@ -73,8 +74,6 @@ class CustomIssueGen(IssueGen):
         self.max_var_tokens = settings.get("max_var_tokens", 10_000)
 
         self._lock = threading.Lock()
-
-# PROBLEM_STATEMENT = "" # TODO
 
 
 def remove_added_test_files(patch: str) -> str:
@@ -128,9 +127,10 @@ def process_single_job(
             "image_name": image_name,
             "repo": repo,
             "problem_statement": "",
-            "base_commit": "main"
+            "base_commit": "main",
+            "patch": ""  # Empty patch for bug generation mode
             # FAIL_TO_PASS: [],
-            # PASS_TO_PASS: [], 
+            # PASS_TO_PASS: [],
 
         }
         env_args = EnvArgs(ds=ds)
@@ -239,9 +239,7 @@ def regular(
     output_file: str | Path,
     run_id: str,
     logdir: str | Path,
-    config_file: str | Path,
     seed_per_image: int = 1,
-    api_key: str | None = None,
     max_workers: int = 1,
     max_tries: int = 1,
     num_jobs: int | None = None,
@@ -298,7 +296,7 @@ def regular(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks for current batch
             future_to_jspec = {
-                executor.submit(process_single_job, jspec, logdir, model_name, run_id, config_file, api_key): (jspec, attempt)
+                executor.submit(process_single_job, jspec, logdir, model_name, run_id): (jspec, attempt)
                 for jspec, attempt in current_batch
             }
             
@@ -344,6 +342,4 @@ def regular(
 
 if __name__ == '__main__':
     import fire
-    fire.Fire({
-        "regular": regular,
-    })
+    fire.Fire(regular)
