@@ -23,6 +23,8 @@ while getopts "m:d:b:r:n:g:t:u:" opt; do
 done
 shift $((OPTIND-1))
 
+MODEL="${MODEL%/}"
+
 DATA_DIR=${1:?DATA_DIR missing}
 LOG_DIR=${2:?LOG_DIR missing}
 
