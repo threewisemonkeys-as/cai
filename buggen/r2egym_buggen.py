@@ -175,6 +175,11 @@ def process_single_job(
 
         patch_text = trajectory.output_patch
         patch_text = remove_added_test_files(patch_text)
+        
+        # Save trajectory to disk
+        trajectory_output_path = image_output_dir / "trajectory.json"
+        trajectory_output_path.write_text(trajectory.model_dump_json(indent=2))
+        logger.info(f"Saved trajectory to {trajectory_output_path}")
             
         logger.info(f"Successfully generated patch for {image_name} with seed {seed}. Checking if it fails tests")
         report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
@@ -242,7 +247,7 @@ def regular(
     seed_per_image: int = 1,
     max_workers: int = 1,
     max_tries: int = 1,
-    num_jobs: int | None = None,
+    # num_jobs: int | None = None,
     shuffle: bool = False,
 ):
     """
@@ -276,7 +281,7 @@ def regular(
         existing_instance_ids = set([i['instance_id'] for i in pre_existing_data])
         jobs_specs = [(i, s) for (i, s) in jobs_specs if create_instance_id(i, s) not in existing_instance_ids]
 
-    num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
+    num_jobs = len(jobs_specs)
     jobs_specs = jobs_specs[:num_jobs]
     
     logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
