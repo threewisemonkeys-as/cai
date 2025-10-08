@@ -157,10 +157,10 @@ instance_prompt: |-
   - Ensure the fix doesn't break existing functionality.
   
 command_files:
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/file_editor.py"
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/search.py"
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/execute_bash.py"
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/finish.py"
+  - "~/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/file_editor.py"
+  - "~/cai/R2E-Gym/src/r2egym/agenthub/tools/search.py"
+  - "~/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/execute_bash.py"
+  - "~/cai/R2E-Gym/src/r2egym/agenthub/tools/finish.py"
 
 llm_name: "gpt-4o"
 # demo_file: "./r2egym/agenthub/config/localizer-demo"
