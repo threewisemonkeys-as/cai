@@ -141,7 +141,7 @@ def process_single_job(
             name="EditAgent",
             args=agent_args,
             logger=logger,
-            litellm_completion_kwargs={"azure_ad_token_provider": AZURE_AD_TOKEN_PROVIDER}
+            # litellm_completion_kwargs={"azure_ad_token_provider": AZURE_AD_TOKEN_PROVIDER}
         )
 
         trajectory = agent.run(
