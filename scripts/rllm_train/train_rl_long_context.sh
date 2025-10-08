@@ -43,26 +43,26 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
 
 # Start Ray cluster manually
-ray_init_timeout=300  # Default timeout for Ray initialization in seconds.
-ray_port=6379  # Port used by the Ray head node.
-HEAD_NODE_ADDRESS="${MASTER_ADDR}:${ray_port}"
-NODE_RANK="${NODE_RANK:-${RANK:-0}}"
+# ray_init_timeout=300  # Default timeout for Ray initialization in seconds.
+# ray_port=6379  # Port used by the Ray head node.
+# HEAD_NODE_ADDRESS="${MASTER_ADDR}:${ray_port}"
+# NODE_RANK="${NODE_RANK:-${RANK:-0}}"
 
-if [ "$NODE_RANK" -eq 0 ]; then
-  # Head node
-  ray start --head --port=${ray_port}
-  ray status
+# if [ "$NODE_RANK" -eq 0 ]; then
+#   # Head node
+#   ray start --head --port=${ray_port}
+#   ray status
 
-  # Poll Ray until every worker node is active.
-  for (( i=0; i < $ray_init_timeout; i+=5 )); do
-      active_nodes=`python3 -c 'import ray; ray.init(); print(sum(node["Alive"] for node in ray.nodes()))'`
-      if [ $active_nodes -eq $NODES ]; then
-        echo "All ray workers are active and the ray cluster is initialized successfully."
-        break
-      fi
-      echo "Wait for all ray workers to be active. $active_nodes/$NODES is active"
-      sleep 5s;
-  done
+#   # Poll Ray until every worker node is active.
+#   for (( i=0; i < $ray_init_timeout; i+=5 )); do
+#       active_nodes=`python3 -c 'import ray; ray.init(); print(sum(node["Alive"] for node in ray.nodes()))'`
+#       if [ $active_nodes -eq $NODES ]; then
+#         echo "All ray workers are active and the ray cluster is initialized successfully."
+#         break
+#       fi
+#       echo "Wait for all ray workers to be active. $active_nodes/$NODES is active"
+#       sleep 5s;
+#   done
 
 
   MODEL_NAME=$(echo "${MODEL}" | tr '/.' '__')
@@ -75,9 +75,9 @@ if [ "$NODE_RANK" -eq 0 ]; then
     data.train_files=${DATA_DIR}/${DATASET}/train_verl.parquet \
     data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
-    data.val_batch_size=100 \
-    data.max_prompt_length=10000 \
-    data.max_response_length=32768 \
+    data.val_batch_size=50 \
+    data.max_prompt_length=6500 \
+    data.max_response_length=8096 \
     data.filter_overlong_prompts=True \
     data.filter_overlong_prompts_workers=1 \
     actor_rollout_ref.model.path=${MODEL} \
@@ -90,7 +90,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32000 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=64000 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -121,27 +121,24 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
-    trainer.save_freq=5 \
-    trainer.test_freq=10 \
+    trainer.save_freq=25 \
+    trainer.test_freq=50 \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=${EXP_LOG_DIR} \
     env.name=swe \
     agent.name=sweagent \
-    agent.max_steps=100 \
+    agent.max_steps=50 \
     agent.overlong_filter=True \
-    agent.trajectory_timeout=3000 \
+    agent.trajectory_timeout=5400 \
     agent.async_engine=True \
-    trainer.total_epochs=1000
+    trainer.total_epochs=500
 
 else
   # Worker node - retry until connection succeeds or timeout expires
   for (( i=0; i < $ray_init_timeout; i+=5 )); do
-
-    MASTER_IP=$(python3 -c "import socket; print(socket.gethostbyname('$MASTER_ADDR'))")
-    NEW_HEAD_NODE_ADDRESS="${MASTER_IP}:${ray_port}"
-    ray start --address="${NEW_HEAD_NODE_ADDRESS}"
+    ray start --address="${HEAD_NODE_ADDRESS}" --block
     if [ $? -eq 0 ]; then
-      echo "Worker: Ray runtime started with head address ${NEW_HEAD_NODE_ADDRESS}"
+      echo "Worker: Ray runtime started with head address ${HEAD_NODE_ADDRESS}"
       ray status
       exit 0
     fi
@@ -149,6 +146,6 @@ else
     sleep 5s;
   done
 
-  echo "Ray worker start timeout, head address: ${NEW_HEAD_NODE_ADDRESS}"
+  echo "Ray worker start timeout, head address: ${HEAD_NODE_ADDRESS}"
   exit 1
 fi

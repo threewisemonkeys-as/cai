@@ -34,7 +34,7 @@ until curl -fsS http://127.0.0.1:8000/health >/dev/null; do sleep 0.5; done
 
 python src/r2egym/agenthub/run/edit.py runagent_multiple \
   --traj_dir "$LOG_DIR" \
-  --max_workers 20 \
+  --max_workers 100 \
   --start_idx 0 \
   --k 500 \
   --dataset R2E-Gym/SWE-Bench-Verified \
@@ -42,8 +42,9 @@ python src/r2egym/agenthub/run/edit.py runagent_multiple \
   --llm_name "hosted_vllm/$MODEL_NAME" \
   --use_fn_calling False \
   --exp_name r2egym-qwen3_8b-swebv-eval \
-  --temperature 0 \
-  --max_steps 50 & pid2=$!
+  --temperature 0.6 \
+  --max_steps 50 & pid2=$! \
+  --fix_random_seed
 
 # capture exit codes without tripping 'set -e'
 s1=0; wait "$pid1" || s1=$?

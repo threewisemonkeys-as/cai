@@ -23,6 +23,8 @@ while getopts "m:d:b:r:n:g:t:u:" opt; do
 done
 shift $((OPTIND-1))
 
+MODEL="${MODEL%/}"
+
 DATA_DIR=${1:?DATA_DIR missing}
 LOG_DIR=${2:?LOG_DIR missing}
 
@@ -77,7 +79,8 @@ if [ "$NODE_RANK" -eq 0 ]; then
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=100 \
     data.max_prompt_length=10000 \
-    data.max_response_length=32768 \
+    data.max_response_length=65536 \
+    data.max_train_response_length=32000 \
     data.filter_overlong_prompts=True \
     data.filter_overlong_prompts_workers=1 \
     actor_rollout_ref.model.path=${MODEL} \
@@ -107,8 +110,8 @@ if [ "$NODE_RANK" -eq 0 ]; then
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
     actor_rollout_ref.rollout.n=${ROLLOUTS} \
-    actor_rollout_ref.rollout.val_kwargs.n=1 \
-    actor_rollout_ref.rollout.val_kwargs.temperature=0 \
+    actor_rollout_ref.rollout.val_kwargs.n=3 \
+    actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.entropy_coeff=0.0 \
     algorithm.kl_ctrl.kl_coef=0.001 \
@@ -122,7 +125,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
     trainer.save_freq=5 \
-    trainer.test_freq=10 \
+    trainer.test_freq=25 \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=${EXP_LOG_DIR} \
     env.name=swe \

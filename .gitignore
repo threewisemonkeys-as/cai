@@ -175,5 +175,5 @@ cython_debug/
 
 data/
 logs/
-scripts/task_sampling/buggen_tasks/
 .DS_Store
+scripts/task_sampling/
