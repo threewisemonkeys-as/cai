@@ -120,7 +120,8 @@ instance_prompt: |-
   Come up with a plan to implement it and then make the necessary changes to the codebase.
   You can use the tools provided to edit files, run tests, and submit your changes.
   Do not make edits to pre-existing tests. Pre-existing tests in the repo should be left alone.
-  The feature you introduce should not break any existing functionality.
+  The feature you introduce should not break any existing functionality. 
+  You should prioritize to re-use existing helper functions and code patterns in the repo, you can make changes to existing helper functions if needed to support the new feature.
   Make sure the edit you make is complex - you should introduce at least two related changes in the codebase in different files.
 
   Follow these steps to resolve the issue:
@@ -155,12 +156,13 @@ instance_prompt: |-
       - Use grep with `-A -B -C` flags to quickly identify the relevant code blocks during your exploration.
   - When exploring the codebase, use targeted search patterns to minimize unnecessary operations.
   - Ensure the fix doesn't break existing functionality.
+  - Maximize the use of existing helper functions and code patterns in the repo, do not create new lower-level helper functions unless absolutely necessary.
   
 command_files:
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/file_editor.py"
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/search.py"
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/execute_bash.py"
-  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/finish.py"
+  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/file_editor.py"
+  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/search.py"
+  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/execute_bash.py"
+  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/finish.py"
 
 llm_name: "gpt-4o"
 # demo_file: "./r2egym/agenthub/config/localizer-demo"

@@ -74,6 +74,16 @@ class CustomIssueGen(IssueGen):
         self.max_var_tokens = settings.get("max_var_tokens", 10_000)
 
         self._lock = threading.Lock()
+    
+    def get_test_functions(self, instance: dict) -> tuple[list[str], list[str]]:
+        """
+        Override to avoid cloning repos that don't exist on GitHub.
+        For R2E-Gym generated bugs, we don't have access to test source code.
+        
+        Returns:
+            Empty list of test functions, empty list of repos to remove
+        """
+        return [], []
 
 
 def remove_added_test_files(patch: str) -> str:
@@ -96,9 +106,17 @@ def process_single_job(
     logdir: Path | str, 
     model_name: str, 
     run_id: str,
+    issue_generator: CustomIssueGen,
 ) -> tuple[dict | None, bool, str | None]:
     """
     Process a single Docker image.
+    
+    Args:
+        jspec: Job specification tuple (image_name, seed)
+        logdir: Directory for logs
+        model_name: Model name for the agent
+        run_id: Run identifier
+        issue_generator: Shared IssueGen instance (reused across all workers)
     
     Returns:
         Tuple of (jspec, success, error_message)
@@ -141,7 +159,7 @@ def process_single_job(
             name="EditAgent",
             args=agent_args,
             logger=logger,
-            litellm_completion_kwargs={"azure_ad_token_provider": AZURE_AD_TOKEN_PROVIDER}
+            # litellm_completion_kwargs={"azure_ad_token_provider": AZURE_AD_TOKEN_PROVIDER}
         )
 
         trajectory = agent.run(
@@ -164,17 +182,13 @@ def process_single_job(
 
         logger.info(f"Completed processing for image: {image_name}")
 
-
-        issue_generator = CustomIssueGen(
-            model=model_name,
-            use_existing=True,
-            n_workers=1,
-            experiment_id=run_id,
-        )
-
-
         patch_text = trajectory.output_patch
         patch_text = remove_added_test_files(patch_text)
+        
+        # Save trajectory to disk
+        trajectory_output_path = image_output_dir / "trajectory.json"
+        trajectory_output_path.write_text(trajectory.model_dump_json(indent=2))
+        logger.info(f"Saved trajectory to {trajectory_output_path}")
             
         logger.info(f"Successfully generated patch for {image_name} with seed {seed}. Checking if it fails tests")
         report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
@@ -216,11 +230,18 @@ def process_single_job(
         logger.info(f"Successfully analysed validation report for {jid}")
         logger.info(f"Generating problem description text for {jid}")
 
-        with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
-            issue_generator.generate_issue(instance_data, 0, fp)
-            fp.flush()
-            fp.seek(0)
-            instance_data = json.load(fp)
+        try:
+            with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
+                logger.info(f"Calling issue_generator.generate_issue for {jid}")
+                issue_generator.generate_issue(instance_data, 0, fp)
+                fp.flush()
+                fp.seek(0)
+                instance_data = json.load(fp)
+                logger.info(f"Successfully generated issue for {jid}")
+        except Exception as e:
+            logger.error(f"Error generating issue for {jid}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return (None, False, f"Error generating issue: {str(e)}")
 
         return (instance_data, True, None)
             
@@ -242,7 +263,7 @@ def regular(
     seed_per_image: int = 1,
     max_workers: int = 1,
     max_tries: int = 1,
-    num_jobs: int | None = None,
+    # num_jobs: int | None = None,
     shuffle: bool = False,
 ):
     """
@@ -276,10 +297,20 @@ def regular(
         existing_instance_ids = set([i['instance_id'] for i in pre_existing_data])
         jobs_specs = [(i, s) for (i, s) in jobs_specs if create_instance_id(i, s) not in existing_instance_ids]
 
-    num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
+    num_jobs = len(jobs_specs)
     jobs_specs = jobs_specs[:num_jobs]
     
     logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
+    
+    # Create shared issue generator instance (loaded once, used by all workers)
+    logger.info("Initializing shared issue generator (loading SWE-bench dataset)...")
+    shared_issue_generator = CustomIssueGen(
+        model=model_name,
+        use_existing=True,
+        n_workers=1,
+        experiment_id=run_id,
+    )
+    logger.info("Issue generator initialized and ready")
     
     # Track results and retry queue
     successful_processes = 0
@@ -296,7 +327,7 @@ def regular(
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks for current batch
             future_to_jspec = {
-                executor.submit(process_single_job, jspec, logdir, model_name, run_id): (jspec, attempt)
+                executor.submit(process_single_job, jspec, logdir, model_name, run_id, shared_issue_generator): (jspec, attempt)
                 for jspec, attempt in current_batch
             }
             

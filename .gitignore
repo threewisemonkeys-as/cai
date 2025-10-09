@@ -175,4 +175,5 @@ cython_debug/
 
 data/
 logs/
+.DS_Store
 scripts/task_sampling/
