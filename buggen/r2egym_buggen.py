@@ -204,6 +204,7 @@ def process_single_job(
                 instance=instance_data,
                 run_id=run_id,
                 run_min_pregold=True,
+                timeout=600,  # 10 minutes timeout for validation
             )
 
         if not report_path.exists():
