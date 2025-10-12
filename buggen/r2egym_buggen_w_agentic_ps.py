@@ -14,6 +14,7 @@ import hashlib
 import yaml
 import threading
 import traceback
+import jinja2
 
 from unidiff import PatchSet
 
@@ -27,10 +28,16 @@ from swebench.harness.constants import (
     FAIL_TO_PASS,
     PASS_TO_PASS,
     LOG_REPORT,
+    LOG_TEST_OUTPUT,
+    KEY_INSTANCE_ID,
 )
-from swesmith.constants import LOG_DIR_RUN_VALIDATION, KEY_TIMED_OUT
+from swesmith.constants import (
+    LOG_DIR_RUN_VALIDATION,
+    KEY_TIMED_OUT,
+    TEST_OUTPUT_START,
+    TEST_OUTPUT_END,
+)
 from swesmith.harness.valid import run_validation
-from swesmith.issue_gen.generate import IssueGen
 
 from athils import JsonLinesFile
 
@@ -50,41 +57,6 @@ AZURE_AD_TOKEN_PROVIDER = get_bearer_token_provider(DefaultAzureCredential(), os
 BACKEND = "kubernetes"
 
 
-ISSUE_GEN_CONFIG_FILE_PATH = CUR_DIR / Path("sans_patch_issue_gen.yaml")
-
-
-class CustomIssueGen(IssueGen):
-    def __init__(
-        self,
-        model: str,
-        use_existing: bool,
-        n_workers: int,
-        experiment_id: Path,
-    ):
-        self.experiment_id = experiment_id
-        self.model = model
-        self.use_existing = use_existing
-        self.n_workers = n_workers
-
-        self.swebv = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
-
-        self.config = yaml.safe_load(ISSUE_GEN_CONFIG_FILE_PATH.read_text())
-        settings = self.config.get("settings", {})
-        self.n_instructions = settings.get("n_instructions", 1)
-        self.max_var_tokens = settings.get("max_var_tokens", 10_000)
-
-        self._lock = threading.Lock()
-    
-    def get_test_functions(self, instance: dict) -> tuple[list[str], list[str]]:
-        """
-        Override to avoid cloning repos that don't exist on GitHub.
-        For R2E-Gym generated bugs, we don't have access to test source code.
-        
-        Returns:
-            Empty list of test functions, empty list of repos to remove
-        """
-        return [], []
-
 
 def remove_added_test_files(patch: str) -> str:
     return str(PatchSet([
@@ -100,24 +72,90 @@ def create_instance_id(image_name: str, seed: str) -> str:
 
 
 R2E_GYM_CONFIG = CUR_DIR / Path("r2egym_featadd.yaml")
+R2E_GYM_PS_CONFIG = CUR_DIR / Path("r2egym_ps_generation.yaml")
+
+
+def get_demo_problem_statements(swebv_dataset, n_demos: int = 3) -> list[str]:
+    """
+    Get a random sample of demonstration problem statements from SWE-bench Verified dataset.
+    Similar to IssueGen.get_demo_issues()
+
+    Args:
+        swebv_dataset: The SWE-bench Verified dataset
+        n_demos: Number of demonstration examples to return
+
+    Returns:
+        List of n_demos random problem statements, truncated to 2000 chars each
+    """
+    problem_statements = [
+        instance["problem_statement"][:2000]  # Truncate to 2000 chars
+        for instance in swebv_dataset
+    ]
+    # Return a random sample (different each time this is called)
+    return random.sample(problem_statements, min(n_demos, len(problem_statements)))
+
+
+def get_test_output(instance_id: str, run_id: str, max_chars: int = 20000) -> str:
+    """
+    Get test output from the validation run.
+    Similar to IssueGen.get_test_output()
+
+    Args:
+        instance_id: The instance ID
+        run_id: The run/experiment ID
+        max_chars: Maximum number of characters to return
+
+    Returns:
+        Test output string, truncated and extracted between START and END markers
+    """
+    test_output_path = (
+        LOG_DIR_RUN_VALIDATION
+        / run_id
+        / instance_id
+        / LOG_TEST_OUTPUT
+    )
+
+    if not test_output_path.exists():
+        logger.warning(f"Test output file not found: {test_output_path}")
+        return "Test output not available."
+
+    test_output = test_output_path.read_text()
+
+    # Extract content between TEST_OUTPUT_START and TEST_OUTPUT_END markers
+    start_idx = test_output.find(TEST_OUTPUT_START)
+    end_idx = test_output.find(TEST_OUTPUT_END)
+
+    if start_idx == -1 or end_idx == -1:
+        logger.warning("Could not find test output markers, using full output")
+        extracted = test_output
+    else:
+        extracted = test_output[start_idx + len(TEST_OUTPUT_START):end_idx]
+
+    # Truncate to max_chars (simple character-based truncation)
+    if len(extracted) > max_chars:
+        half = max_chars // 2
+        extracted = extracted[:half] + "\n\n(...)\n\n" + extracted[-half:]
+
+    return extracted.strip()
+
 
 def process_single_job(
-    jspec, 
-    logdir: Path | str, 
-    model_name: str, 
+    jspec,
+    logdir: Path | str,
+    model_name: str,
     run_id: str,
-    issue_generator: CustomIssueGen,
+    demo_problem_statements: list[str],
 ) -> tuple[dict | None, bool, str | None]:
     """
     Process a single Docker image.
-    
+
     Args:
         jspec: Job specification tuple (image_name, seed)
         logdir: Directory for logs
         model_name: Model name for the agent
         run_id: Run identifier
-        issue_generator: Shared IssueGen instance (reused across all workers)
-    
+        demo_problem_statements: List of demo problem statements for this specific job
+
     Returns:
         Tuple of (jspec, success, error_message)
     """
@@ -213,14 +251,15 @@ def process_single_job(
         logger.info(f"Found report after running validatoin check for {jid} ")
         report = json.load(open(report_path, "r"))
         f2p, p2p = report[FAIL_TO_PASS], report[PASS_TO_PASS]
-        if KEY_TIMED_OUT in report or len(f2p) == 0 or len(p2p) == 0:
-            logger.info(f"Generated patch for {jid} not buggy.")
-            return None, False, "Generated patch not buggy"
 
         if len(f2p) > 5:
             logger.info(f"Generated bug results in more than 5 failing tests for {jid}")
             return None, False, "Too many failing tests"
 
+
+        if KEY_TIMED_OUT in report or len(f2p) == 0 or len(p2p) == 0:
+            logger.info(f"Generated patch for {jid} not buggy.")
+            return None, False, "Generated patch not buggy"
 
         instance_data = {
             "instance_id": instance_id,
@@ -236,18 +275,74 @@ def process_single_job(
         logger.info(f"Generating problem description text for {jid}")
 
         try:
-            with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
-                logger.info(f"Calling issue_generator.generate_issue for {jid}")
-                issue_generator.generate_issue(instance_data, 0, fp)
-                fp.flush()
-                fp.seek(0)
-                instance_data = json.load(fp)
-                logger.info(f"Successfully generated issue for {jid}")
-        except Exception as e:
-            logger.error(f"Error generating issue for {jid}: {str(e)}")
-            logger.error(traceback.format_exc())
-            return (None, False, f"Error generating issue: {str(e)}")
+            # Get test output from validation run
+            test_output = get_test_output(instance_id, run_id, max_chars=20000)
+            logger.info(f"Retrieved test output ({len(test_output)} chars) for {jid}")
 
+            ps_env = RepoEnv(env_args, logger=logger, backend=BACKEND, step_timeout=180)
+
+            # Apply the patch to the environment so the agent can see the changes
+            logger.info(f"Applying buggy patch to environment for problem statement generation")
+            ps_env.runtime.apply_patch(patch_text)
+
+            # Load the problem statement generation agent config
+            ps_agent_args = AgentArgs.from_yaml(R2E_GYM_PS_CONFIG)
+            ps_agent_args.llm_name = model_name
+
+            # Render instance_prompt with demonstrations and test output using Jinja2
+            if demo_problem_statements:
+                env_jinja = jinja2.Environment()
+                template = env_jinja.from_string(ps_agent_args.instance_prompt)
+                rendered_instance_prompt = template.render(
+                    demo_problem_statements=demo_problem_statements,
+                    test_output=test_output,
+                )
+                ps_agent_args.instance_prompt = rendered_instance_prompt
+                logger.info(f"Rendered instance prompt with {len(demo_problem_statements)} demonstrations and test output")
+
+            ps_agent = Agent(
+                name="ProblemStatementAgent",
+                args=ps_agent_args,
+                logger=logger,
+                litellm_completion_kwargs={"azure_ad_token_provider": AZURE_AD_TOKEN_PROVIDER}
+            )
+
+            # Run the agent to generate problem statement
+            ps_trajectory = ps_agent.run(
+                ps_env,
+                max_steps=50,
+                temperature=0.7,
+                max_steps_absolute=50,
+                use_fn_calling=False,
+                scaffold="r2egym",
+                max_token_limit=128000,
+            )
+
+            # Save the PS generation trajectory to disk
+            ps_trajectory_output_path = image_output_dir / "ps_generation_trajectory.json"
+            ps_trajectory_output_path.write_text(ps_trajectory.model_dump_json(indent=2))
+            logger.info(f"Saved PS generation trajectory to {ps_trajectory_output_path}")
+
+            # Extract the problem statement from /testbed/problem_statement.txt
+            problem_statement_output, error_code = ps_env.runtime.run("cat /testbed/problem_statement.txt")
+
+            ps_env.close()
+
+            if error_code != "0" or not problem_statement_output.strip():
+                logger.warning(f"Could not generate problem statement for {jid}.")
+                return None, False, "Could not generate problem statement"
+            else:
+                problem_statement = problem_statement_output.strip()
+                logger.info(f"Successfully extracted problem statement for {jid}")
+
+            # Add problem statement to instance data
+            instance_data["problem_statement"] = problem_statement
+
+        except Exception as e:
+            logger.error(f"Error generating problem statement for {jid}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None, False, "Error generating problem statement"
+            
         return (instance_data, True, None)
             
     except Exception as e:
@@ -268,7 +363,7 @@ def regular(
     seed_per_image: int = 1,
     max_workers: int = 1,
     max_tries: int = 1,
-    # num_jobs: int | None = None,
+    num_jobs: int | None = None,
     shuffle: bool = False,
 ):
     """
@@ -302,21 +397,16 @@ def regular(
         existing_instance_ids = set([i['instance_id'] for i in pre_existing_data])
         jobs_specs = [(i, s) for (i, s) in jobs_specs if create_instance_id(i, s) not in existing_instance_ids]
 
-    num_jobs = len(jobs_specs)
+    num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
     jobs_specs = jobs_specs[:num_jobs]
     
     logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
-    
-    # Create shared issue generator instance (loaded once, used by all workers)
-    logger.info("Initializing shared issue generator (loading SWE-bench dataset)...")
-    shared_issue_generator = CustomIssueGen(
-        model=model_name,
-        use_existing=True,
-        n_workers=1,
-        experiment_id=run_id,
-    )
-    logger.info("Issue generator initialized and ready")
-    
+
+    # Load SWE-bench Verified for demonstration problem statements (loaded once, used by all workers)
+    logger.info("Loading SWE-bench Verified dataset for demonstration problem statements...")
+    swebv_dataset = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
+    logger.info(f"Loaded SWE-bench Verified dataset with {len(swebv_dataset)} instances")
+
     # Track results and retry queue
     successful_processes = 0
     failed_processes = 0
@@ -330,9 +420,16 @@ def regular(
         
         # Process current batch in parallel using ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks for current batch
+            # Submit all tasks for current batch, each with a fresh random sample of demos
             future_to_jspec = {
-                executor.submit(process_single_job, jspec, logdir, model_name, run_id, shared_issue_generator): (jspec, attempt)
+                executor.submit(
+                    process_single_job,
+                    jspec,
+                    logdir,
+                    model_name,
+                    run_id,
+                    get_demo_problem_statements(swebv_dataset, n_demos=3)  # Fresh random sample for each job
+                ): (jspec, attempt)
                 for jspec, attempt in current_batch
             }
             
