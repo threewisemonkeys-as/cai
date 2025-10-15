@@ -140,7 +140,22 @@ else
   # Worker node - retry until connection succeeds or timeout expires
   for (( i=0; i < $ray_init_timeout; i+=5 )); do
 
-    MASTER_IP=$(python3 -c "import socket; print(socket.gethostbyname('$MASTER_ADDR'))")
+    MASTER_IP=""
+    for (( i=0; i < 60; i++ )); do
+      MASTER_IP=$(python3 -c "import socket; print(socket.gethostbyname('$MASTER_ADDR'))" 2>/dev/null || true)
+      if [ -n "$MASTER_IP" ]; then
+        echo "Resolved MASTER_ADDR=$MASTER_ADDR to MASTER_IP=$MASTER_IP"
+        break
+      fi
+      echo "Attempt $((i+1)): Cannot resolve $MASTER_ADDR, retrying in 5s..."
+      sleep 5
+    done
+    
+    if [ -z "$MASTER_IP" ]; then
+      echo "ERROR: Failed to resolve $MASTER_ADDR after 300 seconds"
+      exit 1
+    fi
+
     NEW_HEAD_NODE_ADDRESS="${MASTER_IP}:${ray_port}"
     ray start --address="${NEW_HEAD_NODE_ADDRESS}"
     if [ $? -eq 0 ]; then
