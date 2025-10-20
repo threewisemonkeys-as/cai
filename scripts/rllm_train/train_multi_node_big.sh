@@ -121,7 +121,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.logger=['console','wandb'] \
     trainer.project_name='cai_rl' \
     trainer.experiment_name=${EXPERIMENT_NAME} \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
     trainer.save_freq=5 \
