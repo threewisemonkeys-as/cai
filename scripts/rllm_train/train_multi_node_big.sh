@@ -78,7 +78,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     data.val_files=${DATA_DIR}/SWE_Bench_Verified/test_verl.parquet \
     data.train_batch_size=${TRAIN_BS} \
     data.val_batch_size=20 \
-    data.max_prompt_length=10000 \
+    data.max_prompt_length=20000 \
     data.max_response_length=65536 \
     data.max_train_response_length=32000 \
     data.filter_overlong_prompts=True \
