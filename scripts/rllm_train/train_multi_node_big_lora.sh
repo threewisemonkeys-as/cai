@@ -100,6 +100,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=${USP} \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.model.lora_rank=8 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${TP} \
@@ -121,7 +122,7 @@ if [ "$NODE_RANK" -eq 0 ]; then
     trainer.logger=['console','wandb'] \
     trainer.project_name='cai_rl' \
     trainer.experiment_name=${EXPERIMENT_NAME} \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes=${NODES} \
     trainer.save_freq=5 \

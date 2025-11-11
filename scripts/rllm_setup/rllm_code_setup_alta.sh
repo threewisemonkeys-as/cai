@@ -2,7 +2,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 git clone https://github.com/threewisemonkeys-as/R2E-Gym.git
 cd R2E-Gym
-git checkout fixed-data-alta-cluster
+git checkout mn-k8s
 git submodule update --init --recursive
 pip install --user -e .
 cd ..
