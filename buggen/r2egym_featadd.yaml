@@ -159,10 +159,10 @@ instance_prompt: |-
   - Maximize the use of existing helper functions and code patterns in the repo, do not create new lower-level helper functions unless absolutely necessary.
   
 command_files:
-  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/file_editor.py"
-  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/search.py"
-  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/execute_bash.py"
-  - "/home/eryua/1/cai/R2E-Gym/src/r2egym/agenthub/tools/finish.py"
+  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/file_editor.py"
+  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/search.py"
+  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/r2egym/execute_bash.py"
+  - "/home/v-asonwane/cai/R2E-Gym/src/r2egym/agenthub/tools/finish.py"
 
 llm_name: "gpt-4o"
 # demo_file: "./r2egym/agenthub/config/localizer-demo"

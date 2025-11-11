@@ -205,14 +205,14 @@ def process_single_job(
             max_steps=100,
             temperature=1.0,
             max_steps_absolute=100,
-            use_fn_calling=False,
+            use_fn_calling=True,
             scaffold="r2egym",
             max_token_limit=128000,
         )
         env.close()
         if trajectory.exit_reason != "agent":
             env.close()
-            return None, False, "R2E-Gym Agent Error"
+            return None, False, f"R2E-Gym Agent Error: {trajectory.exit_reason}"
 
 
         if trajectory.output_patch is None or trajectory.output_patch.strip() == "":
@@ -313,7 +313,7 @@ def process_single_job(
                 max_steps=50,
                 temperature=0.7,
                 max_steps_absolute=50,
-                use_fn_calling=False,
+                use_fn_calling=True,
                 scaffold="r2egym",
                 max_token_limit=128000,
             )
@@ -368,7 +368,7 @@ def regular(
 ):
     """
     Process Docker images in parallel with retry logic.
-    
+
     Args:
         images: Path to text file containing newline seperated list of images
         model_name: Model name for the agent
@@ -388,7 +388,7 @@ def regular(
 
     if shuffle:
         random.shuffle(jobs_specs)
-    
+
     # Create output directory
     output_file = Path(output_file)
     output_file.parent.mkdir(exist_ok=True, parents=True)
@@ -399,8 +399,40 @@ def regular(
 
     num_jobs = len(jobs_specs) if num_jobs is None else num_jobs
     jobs_specs = jobs_specs[:num_jobs]
-    
+
     logger.info(f"Processing {len(jobs_specs)} jobs with {max_workers} workers, max {max_tries} tries per job")
+
+    # Create attempt log file to track all attempts (image, seed) with their outcomes
+    attempt_log_file = output_file.parent / f"{output_file.stem}_attempts.jsonl"
+    attempt_log_lock = threading.Lock()
+
+    def log_attempt(image_name: str, seed: str, attempt: int, status: str, error_reason: str | None = None, instance_id: str | None = None):
+        """
+        Log an attempt to the attempt log file.
+
+        Args:
+            image_name: Name of the Docker image
+            seed: Random seed used
+            attempt: Attempt number (1-indexed)
+            status: Status of the attempt ("success" or "failed")
+            error_reason: Reason for failure if status is "failed"
+            instance_id: Instance ID if available
+        """
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "image_name": image_name,
+            "seed": seed,
+            "instance_id": instance_id or create_instance_id(image_name, seed),
+            "attempt": attempt,
+            "status": status,
+            "error_reason": error_reason,
+        }
+
+        with attempt_log_lock:
+            with open(attempt_log_file, "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+
+    logger.info(f"Attempt log will be written to: {attempt_log_file}")
 
     # Load SWE-bench Verified for demonstration problem statements (loaded once, used by all workers)
     logger.info("Loading SWE-bench Verified dataset for demonstration problem statements...")
@@ -411,13 +443,13 @@ def regular(
     successful_processes = 0
     failed_processes = 0
     retry_queue = []  # List of (image_name, attempt_count) tuples
-    
+
     # Initialize all images with attempt count 1
     current_batch = [(jspec, 1) for jspec in jobs_specs]
-    
+
     while current_batch:
         logger.info(f"Processing batch of {len(current_batch)} images...")
-        
+
         # Process current batch in parallel using ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks for current batch, each with a fresh random sample of demos
@@ -432,14 +464,17 @@ def regular(
                 ): (jspec, attempt)
                 for jspec, attempt in current_batch
             }
-            
+
             # Process completed tasks as they finish
             for future in as_completed(future_to_jspec):
                 jspec, attempt = future_to_jspec[future]
+                image_name, seed = jspec
                 result, success, error_msg = future.result()
-                
+
                 if success:
                     successful_processes += 1
+                    instance_id = result.get('instance_id') if result else None
+                    log_attempt(image_name, seed, attempt, "success", error_reason=None, instance_id=instance_id)
                     logger.info(f"✓ Completed {jspec} on attempt {attempt} ({successful_processes}/{len(jobs_specs)})")
                     if output_file.exists():
                         pre_existing_data = json.load(open(output_file, "r"))
@@ -448,6 +483,7 @@ def regular(
                     pre_existing_data.append(result)
                     json.dump(pre_existing_data, open(output_file, "w"), indent=2)
                 else:
+                    log_attempt(image_name, seed, attempt, "failed", error_reason=error_msg)
                     if attempt < max_tries:
                         # Add to retry queue for next batch
                         retry_queue.append((jspec, attempt + 1))
@@ -460,15 +496,46 @@ def regular(
         # Prepare next batch from retry queue
         current_batch = retry_queue.copy()
         retry_queue.clear()
-    
+
     # Summary
     total_processed = successful_processes + failed_processes
     logger.info(f"Processing complete! Success: {successful_processes}, Failed: {failed_processes}, Total: {total_processed}")
-    
+
+    # Generate summary statistics from attempt log
+    if attempt_log_file.exists():
+        logger.info(f"\n{'='*60}")
+        logger.info("ATTEMPT LOG SUMMARY")
+        logger.info(f"{'='*60}")
+
+        attempt_data = []
+        with open(attempt_log_file, "r") as f:
+            for line in f:
+                attempt_data.append(json.loads(line))
+
+        # Count failures by error reason
+        error_counts = {}
+        total_attempts = len(attempt_data)
+        success_count = sum(1 for a in attempt_data if a["status"] == "success")
+        failed_count = sum(1 for a in attempt_data if a["status"] == "failed")
+
+        for entry in attempt_data:
+            if entry["status"] == "failed" and entry["error_reason"]:
+                error_reason = entry["error_reason"]
+                error_counts[error_reason] = error_counts.get(error_reason, 0) + 1
+
+        logger.info(f"Total attempts logged: {total_attempts}")
+        logger.info(f"Successful attempts: {success_count} ({success_count/total_attempts*100:.1f}%)")
+        logger.info(f"Failed attempts: {failed_count} ({failed_count/total_attempts*100:.1f}%)")
+        logger.info(f"\nFailure breakdown by reason:")
+        for reason, count in sorted(error_counts.items(), key=lambda x: x[1], reverse=True):
+            logger.info(f"  - {reason}: {count} ({count/failed_count*100:.1f}% of failures)")
+        logger.info(f"{'='*60}\n")
+
     return {
         'successful': successful_processes,
         'failed': failed_processes,
-        'total': len(jobs_specs)
+        'total': len(jobs_specs),
+        'attempt_log_file': str(attempt_log_file)
     }
 
 
