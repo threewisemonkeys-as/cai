@@ -2,12 +2,13 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 -m MODEL [-e EXP_NAME] [-w WORKERS] [-t TP] [-k KUBECONFIG]" >&2
+  echo "Usage: $0 -m MODEL [-e EXP_NAME] [-w WORKERS] [-t TP] [-k KUBECONFIG] [-o OUT_DIR]" >&2
   echo "  -m MODEL        (required) Path to model directory"
   echo "  -e EXP_NAME     Experiment name (default: r2egym_fb_featadd)"
   echo "  -w WORKERS      Number of rollout workers (default: 1)"
   echo "  -t TP           Tensor parallel size (default: 1)"
-  echo "  -k KUBECONFIG   Path to kube config (will export KUBE_CONFIG_PATH)"
+  echo "  -k KUBECONFIG   Path to kube config (exports KUBE_CONFIG_PATH)"
+  echo "  -o OUT_DIR      Output directory (default: data)"
   exit 1
 }
 
@@ -15,37 +16,39 @@ EXP_NAME="r2egym_fb_featadd"
 WORKERS=1
 TP=1
 KUBECONFIG_PATH=""
+OUT_DIR="data"
 
-while getopts "m:e:w:t:k:" opt; do
+while getopts "m:e:w:t:k:o:" opt; do
   case "$opt" in
     m) MODEL=$OPTARG ;;
     e) EXP_NAME=$OPTARG ;;
     w) WORKERS=$OPTARG ;;
     t) TP=$OPTARG ;;
     k) KUBECONFIG_PATH=$OPTARG ;;
+    o) OUT_DIR=$OPTARG ;;
     *) usage ;;
   esac
 done
 shift $((OPTIND - 1))
 
-# Ensure MODEL was provided
 if [ -z "${MODEL+x}" ]; then
   echo "Error: -m MODEL is required" >&2
   usage
 fi
 
-# Export kube config path if provided
 if [ -n "$KUBECONFIG_PATH" ]; then
   export KUBE_CONFIG_PATH="$KUBECONFIG_PATH"
   echo "KUBE_CONFIG_PATH set to $KUBE_CONFIG_PATH"
 fi
 
+mkdir -p "$OUT_DIR/$EXP_NAME"
+
 echo "MODEL:       $MODEL"
 echo "EXP_NAME:    $EXP_NAME"
 echo "WORKERS:     $WORKERS"
 echo "TP:          $TP"
+echo "OUT_DIR:     $OUT_DIR/$EXP_NAME"
 
-# Start vLLM
 vllm serve "$MODEL" \
   --tensor-parallel-size "$TP" \
   --trust-remote-code \
@@ -65,9 +68,9 @@ echo "vLLM ready."
 python buggen/r2egym_buggen_w_agentic_ps.py \
     --images swesmith/image_names.txt \
     --model-name "hosted_vllm/$MODEL" \
-    --output_file "data/$EXP_NAME.json" \
+    --output_file "$OUT_DIR/$EXP_NAME/$EXP_NAME.json" \
     --run_id "$EXP_NAME" \
-    --logdir "data/$EXP_NAME" \
+    --logdir "$OUT_DIR/$EXP_NAME" \
     --seed_per_image 200 \
     --max_workers "$WORKERS" \
     --shuffle=True
