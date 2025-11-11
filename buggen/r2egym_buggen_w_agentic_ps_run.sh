@@ -49,7 +49,7 @@ until curl -fsS http://127.0.0.1:8000/health >/dev/null; do
 done
 echo "vLLM ready."
 
-python r2egym_buggen_w_agentic_ps.py \
+python buggen/r2egym_buggen_w_agentic_ps.py \
     --images swesmith/image_names.txt \
     --model-name "hosted_vllm/$MODEL" \
     --output_file "data/$EXP_NAME.json" \
