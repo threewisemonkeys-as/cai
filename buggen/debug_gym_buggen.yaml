@@ -1,0 +1,24 @@
+llm_config_file: null
+
+# Tool names resolved via debug_gym.gym.tools.toolbox.Toolbox
+tools:
+  - listdir
+  - view
+  - grep
+  - rewrite
+  - bash
+  - submit
+
+agent:
+  max_steps: 80
+  max_rewrite_steps: 40
+  memory_size: 120
+
+environment:
+  terminal: kubernetes
+  workspace_dir: /testbed
+  instructions_file: free_env_buggen_instructions.md
+  setup_commands: []
+  terminal_kwargs: {}
+  dir_tree_depth: 2
+  init_git: true
