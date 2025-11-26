@@ -1,3 +1,13 @@
+"""Debug-Gym powered bug generation pipeline.
+
+This module orchestrates the end-to-end "buggen" flow using Debug-Gym.
+It prepares execution environments, drives the FreeAgent, validates the
+resulting patch with SWE-bench tooling, and produces human-readable issue
+reports. The CLI entry point is ``regular``.
+"""
+
+from __future__ import annotations
+
 import copy
 import hashlib
 import json
@@ -9,7 +19,7 @@ import threading
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
@@ -17,6 +27,7 @@ from typing import Any
 
 import yaml
 from datasets import load_dataset
+from dotenv import load_dotenv
 from unidiff import PatchSet
 
 from debug_gym.agents.free_agent import FreeAgent
@@ -25,16 +36,10 @@ from debug_gym.gym.tools.toolbox import Toolbox
 from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
-from swebench.harness.constants import (
-    FAIL_TO_PASS,
-    PASS_TO_PASS,
-    LOG_REPORT,
-)
-from swesmith.constants import LOG_DIR_RUN_VALIDATION, KEY_TIMED_OUT
+from swebench.harness.constants import FAIL_TO_PASS, LOG_REPORT, PASS_TO_PASS
+from swesmith.constants import KEY_TIMED_OUT, LOG_DIR_RUN_VALIDATION
 from swesmith.harness.valid import run_validation
 from swesmith.issue_gen.generate import IssueGen
-
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -42,41 +47,29 @@ CUR_DIR = Path(__file__).parent
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-BACKEND = "kubernetes"
-
 DEFAULT_CONFIG_PATH = CUR_DIR / "debug_gym_buggen.yaml"
-DEFAULT_INSTRUCTIONS_PATH = CUR_DIR / "free_env_buggen_instructions.md"
-DEFAULT_INSTRUCTIONS_FALLBACK = (
-    "You are inside an isolated container with the project at /testbed. "
-    "Use the available tools to explore, edit, and run commands. "
-    "Aim to craft a realistic regression without altering existing tests. "
-    "Summarize your work with the submit tool once complete."
-)
-
-DEFAULT_TOOLS = ("listdir", "view", "grep", "rewrite", "bash", "submit")
-DEFAULT_WORKSPACE_DIR = "/testbed"
-DEFAULT_AGENT_MAX_STEPS = 80
-DEFAULT_AGENT_MAX_REWRITE_STEPS = 40
-DEFAULT_AGENT_MEMORY = 120
-DEFAULT_DIR_TREE_DEPTH = 2
-DEFAULT_INIT_GIT = True
 
 ISSUE_GEN_CONFIG_FILE_PATH = CUR_DIR / Path("sans_patch_issue_gen.yaml")
 
+JobSpec = tuple[str, str]
+
 
 class CustomIssueGen(IssueGen):
+    """Issue generator that skips cloning test repositories for Debug-Gym outputs."""
+
     def __init__(
         self,
         model: str,
         use_existing: bool,
         n_workers: int,
-        experiment_id: Path,
+        experiment_id: Path | str,
     ):
-        self.experiment_id = experiment_id
+        self.experiment_id = Path(experiment_id)
         self.model = model
         self.use_existing = use_existing
         self.n_workers = n_workers
 
+        # The SWE-bench dataset is required for prompt templates and metadata.
         self.swebv = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
 
         self.config = yaml.safe_load(ISSUE_GEN_CONFIG_FILE_PATH.read_text())
@@ -87,36 +80,16 @@ class CustomIssueGen(IssueGen):
         self._lock = threading.Lock()
 
     def get_test_functions(self, instance: dict) -> tuple[list[str], list[str]]:
-        """
-        Override to avoid cloning repos that don't exist on GitHub.
-        For Debug-Gym generated bugs, we don't have access to test source code.
+        """Avoid cloning missing repositories when generating issues."""
 
-        Returns:
-            Empty list of test functions, empty list of repos to remove
-        """
         return [], []
-
-
-def remove_added_test_files(patch: str) -> str:
-    return str(
-        PatchSet(
-            [
-                str(f)
-                for f in PatchSet(patch)
-                if not (f.is_added_file and f.path.endswith(".py") and "test_" in f.path)
-            ]
-        )
-    )
-
-
-def create_instance_id(image_name: str, seed: str) -> str:
-    _, _, repo_name, short_commit_sha = image_name.split(".")
-    return f"{repo_name}.{short_commit_sha}.debuggym.seed_{seed}"
 
 
 @dataclass(frozen=True)
 class DebugGymSessionConfig:
-    llm_config_file: str | None
+    """Runtime configuration for FreeEnv, FreeAgent, and supporting tools."""
+
+    llm_name: str | None
     tools: tuple[str, ...]
     env_terminal: str
     env_workspace_dir: str
@@ -128,7 +101,48 @@ class DebugGymSessionConfig:
     agent_config: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class BuggenRuntimeConfig:
+    """Execution parameters that previously came from CLI arguments."""
+
+    images_file: Path
+    output_file: Path
+    logdir: Path
+    run_id: str
+    seed_per_image: int
+    max_workers: int
+    max_tries: int
+    shuffle: bool
+
+
+def remove_added_test_files(patch: str) -> str:
+    """Strip any newly added test files from the generated patch."""
+
+    return str(
+        PatchSet(
+            [
+                str(file_patch)
+                for file_patch in PatchSet(patch)
+                if not (
+                    file_patch.is_added_file
+                    and file_patch.path.endswith(".py")
+                    and "test_" in file_patch.path
+                )
+            ]
+        )
+    )
+
+
+def create_instance_id(image_name: str, seed: str) -> str:
+    """Create a unique SWE-bench style identifier for this run."""
+
+    _, _, repo_name, short_commit_sha = image_name.split(".")
+    return f"{repo_name}.{short_commit_sha}.debuggym.seed_{seed}"
+
+
 def _resolve_path(base: Path, maybe_path: str | None) -> str | None:
+    """Resolve ``maybe_path`` relative to ``base`` when not absolute."""
+
     if maybe_path is None:
         return None
     path = Path(maybe_path)
@@ -137,24 +151,42 @@ def _resolve_path(base: Path, maybe_path: str | None) -> str | None:
     return str(path)
 
 
-def load_session_config(config_path: str | Path | None) -> DebugGymSessionConfig:
+def load_pipeline_config(
+    config_path: str | Path | None,
+) -> tuple[DebugGymSessionConfig, BuggenRuntimeConfig]:
+    """Load environment, agent, and runtime parameters from YAML configuration."""
+
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
         raise FileNotFoundError(f"Debug-Gym buggen config not found: {cfg_path}")
 
     config_data = yaml.safe_load(cfg_path.read_text()) or {}
 
-    llm_config_file = config_data.get("llm_config_file")
-    llm_config_file = _resolve_path(cfg_path, llm_config_file)
+    llm_name = config_data.get("llm") or config_data.get("model_name")
+    if llm_name is not None:
+        llm_name = str(llm_name).strip() or None
 
-    tools = config_data.get("tools") or list(DEFAULT_TOOLS)
+    tools = config_data.get("tools")
+    if not tools:
+        raise ValueError("Configuration must specify a non-empty 'tools' list.")
     tools = tuple(str(tool).strip() for tool in tools if str(tool).strip())
     if not tools:
-        tools = DEFAULT_TOOLS
+        raise ValueError("Configuration produced an empty tool list after stripping values.")
 
-    env_cfg = config_data.get("environment") or {}
-    terminal = str(env_cfg.get("terminal", BACKEND))
-    workspace_dir = str(env_cfg.get("workspace_dir", DEFAULT_WORKSPACE_DIR))
+    env_cfg = config_data.get("environment")
+    if not isinstance(env_cfg, dict):
+        raise ValueError("Configuration must include an 'environment' mapping.")
+
+    terminal_cfg = env_cfg.get("terminal")
+    terminal = str(terminal_cfg).strip() if terminal_cfg is not None else "docker"
+    if not terminal:
+        terminal = "docker"
+
+    workspace_cfg = env_cfg.get("workspace_dir")
+    if workspace_cfg is None:
+        workspace_dir = "/testbed"
+    else:
+        workspace_dir = str(workspace_cfg).strip() or "/testbed"
 
     instructions = env_cfg.get("instructions")
     instructions_file = env_cfg.get("instructions_file")
@@ -164,85 +196,190 @@ def load_session_config(config_path: str | Path | None) -> DebugGymSessionConfig
         )
     if instructions_file:
         resolved_instructions_path = _resolve_path(cfg_path, instructions_file)
-        if resolved_instructions_path is None or not Path(
-            resolved_instructions_path
-        ).exists():
+        if resolved_instructions_path is None or not Path(resolved_instructions_path).exists():
             raise FileNotFoundError(
                 f"Instructions file not found: {resolved_instructions_path}"
             )
         instructions = Path(resolved_instructions_path).read_text()
     if not instructions:
-        if DEFAULT_INSTRUCTIONS_PATH.exists():
-            instructions = DEFAULT_INSTRUCTIONS_PATH.read_text()
-        else:
-            instructions = DEFAULT_INSTRUCTIONS_FALLBACK
+        raise ValueError(
+            "Environment configuration must provide either inline 'instructions' or a valid 'instructions_file'."
+        )
 
-    setup_commands = env_cfg.get("setup_commands") or []
-    if isinstance(setup_commands, str):
-        setup_commands = [setup_commands]
-    setup_commands = tuple(
-        str(cmd).strip() for cmd in setup_commands if str(cmd).strip()
-    )
+    setup_commands = env_cfg.get("setup_commands")
+    if setup_commands is None:
+        setup_commands_tuple: tuple[str, ...] = ()
+    elif isinstance(setup_commands, str):
+        setup_commands_tuple = (setup_commands.strip(),) if setup_commands.strip() else ()
+    else:
+        setup_commands_tuple = tuple(
+            str(cmd).strip() for cmd in setup_commands if str(cmd).strip()
+        )
 
     terminal_kwargs = env_cfg.get("terminal_kwargs") or {}
     if not isinstance(terminal_kwargs, dict):
         raise ValueError("environment.terminal_kwargs must be a mapping")
 
-    dir_tree_depth = int(env_cfg.get("dir_tree_depth", DEFAULT_DIR_TREE_DEPTH))
-    init_git = bool(env_cfg.get("init_git", DEFAULT_INIT_GIT))
+    dir_tree_depth = env_cfg.get("dir_tree_depth", 1)
+    try:
+        dir_tree_depth = int(dir_tree_depth)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("environment.dir_tree_depth must be an integer") from exc
 
-    agent_cfg = dict(config_data.get("agent") or {})
-    agent_cfg["max_steps"] = int(
-        agent_cfg.get("max_steps", DEFAULT_AGENT_MAX_STEPS)
-    )
-    agent_cfg["max_rewrite_steps"] = int(
-        agent_cfg.get("max_rewrite_steps", DEFAULT_AGENT_MAX_REWRITE_STEPS)
-    )
-    agent_cfg["memory_size"] = int(
-        agent_cfg.get("memory_size", max(agent_cfg["max_steps"], DEFAULT_AGENT_MEMORY))
-    )
+    init_git_raw = env_cfg.get("init_git", True)
+    if isinstance(init_git_raw, str):
+        init_git = init_git_raw.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        init_git = bool(init_git_raw)
 
-    return DebugGymSessionConfig(
-        llm_config_file=llm_config_file,
+    agent_cfg_raw = config_data.get("agent")
+    if not isinstance(agent_cfg_raw, dict):
+        raise ValueError("Configuration must include an 'agent' mapping.")
+    agent_cfg = dict(agent_cfg_raw)
+
+    for numeric_key in ("max_steps", "max_rewrite_steps"):
+        if numeric_key not in agent_cfg:
+            raise KeyError(f"Agent configuration missing required key '{numeric_key}'.")
+        agent_cfg[numeric_key] = int(agent_cfg[numeric_key])
+
+    memory_size_raw = agent_cfg.get("memory_size", agent_cfg["max_steps"])
+    agent_cfg["memory_size"] = int(memory_size_raw)
+
+    run_cfg = config_data.get("run")
+    if not isinstance(run_cfg, dict):
+        raise ValueError("Configuration must include a 'run' mapping.")
+
+    images_path = run_cfg.get("images")
+    if not images_path:
+        raise ValueError("run.images must specify a file containing image names.")
+    images_path_resolved = _resolve_path(cfg_path, images_path)
+    if images_path_resolved is None or not Path(images_path_resolved).exists():
+        raise FileNotFoundError(f"Images list file not found: {images_path_resolved}")
+
+    output_file = run_cfg.get("output_file")
+    if not output_file:
+        raise ValueError("run.output_file must be provided.")
+    output_file_resolved = Path(_resolve_path(cfg_path, output_file) or output_file).resolve()
+
+    logdir_value = run_cfg.get("logdir")
+    if not logdir_value:
+        raise ValueError("run.logdir must be provided.")
+    logdir_resolved = Path(_resolve_path(cfg_path, logdir_value) or logdir_value).resolve()
+
+    run_id = str(run_cfg.get("run_id") or datetime.now().strftime("%Y%m%d-%H%M%S"))
+
+    def _as_int(name: str, default: int) -> int:
+        raw = run_cfg.get(name, default)
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - validation
+            raise ValueError(f"run.{name} must be an integer") from exc
+
+    seed_per_image = _as_int("seed_per_image", 1)
+    max_workers = _as_int("max_workers", 1)
+    max_tries = _as_int("max_tries", 1)
+
+    shuffle_raw = run_cfg.get("shuffle", False)
+    if isinstance(shuffle_raw, str):
+        shuffle = shuffle_raw.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        shuffle = bool(shuffle_raw)
+
+    session_config = DebugGymSessionConfig(
+        llm_name=llm_name,
         tools=tools,
         env_terminal=terminal,
         env_workspace_dir=workspace_dir,
         env_instructions=instructions,
-        env_setup_commands=setup_commands,
+        env_setup_commands=setup_commands_tuple,
         env_terminal_kwargs=dict(terminal_kwargs),
         env_dir_tree_depth=dir_tree_depth,
         env_init_git=init_git,
         agent_config=agent_cfg,
     )
 
+    runtime_config = BuggenRuntimeConfig(
+        images_file=Path(images_path_resolved),
+        output_file=output_file_resolved,
+        logdir=logdir_resolved,
+        run_id=run_id,
+        seed_per_image=seed_per_image,
+        max_workers=max_workers,
+        max_tries=max_tries,
+        shuffle=shuffle,
+    )
+
+    return session_config, runtime_config
+
 
 def derive_agent_seed(seed: str) -> int:
+    """Derive a stable integer seed for the agent from a UUID-like string."""
+
     digest = hashlib.sha256(seed.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big")
 
 
+def _cleanup_previous_outputs(output_dir: Path) -> None:
+    """Remove artifacts from previous runs to avoid mixing state."""
+
+    for stale_file in ("debug_gym.patch", "trajectory.json"):
+        candidate = output_dir / stale_file
+        if candidate.exists():
+            candidate.unlink()
+    for stale_dir in ("debug_gym_runs", "debug_gym_logs"):
+        candidate_dir = output_dir / stale_dir
+        if candidate_dir.exists():
+            shutil.rmtree(candidate_dir)
+
+
+def _load_existing_results(output_file: Path) -> list[dict[str, Any]]:
+    """Read any previously saved results, guarding against decode failures."""
+
+    if not output_file.exists():
+        return []
+    try:
+        with output_file.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if not isinstance(data, list):
+                logger.warning("Existing results file is not a list; starting fresh.")
+                return []
+            return data
+    except json.JSONDecodeError:
+        logger.warning("Existing results file is corrupt; starting fresh.")
+        return []
+
+
+def _persist_results(output_file: Path, results: list[dict[str, Any]]) -> None:
+    """Write the accumulated results list to disk."""
+
+    with output_file.open("w", encoding="utf-8") as handle:
+        json.dump(results, handle, indent=2)
+
+
+def _record_success(
+    result: dict[str, Any],
+    *,
+    output_file: Path,
+    results: list[dict[str, Any]],
+    lock: threading.Lock,
+) -> None:
+    """Append a new successful instance in a thread-safe manner."""
+
+    with lock:
+        results.append(result)
+        _persist_results(output_file, results)
+
+
 def process_single_job(
-    jspec,
+    jspec: JobSpec,
     logdir: Path | str,
     model_name: str,
     run_id: str,
     issue_generator: CustomIssueGen,
     session_config: DebugGymSessionConfig,
-) -> tuple[dict | None, bool, str | None]:
-    """
-    Process a single Docker image with Debug-Gym.
+) -> tuple[dict[str, Any] | None, bool, str | None]:
+    """Generate, validate, and describe a single potential bug instance."""
 
-    Args:
-        jspec: Job specification tuple (image_name, seed)
-        logdir: Directory for logs
-        model_name: Model name for the agent
-        run_id: Run identifier
-        issue_generator: Shared IssueGen instance (reused across all workers)
-        session_config: Loaded configuration for environment and agent
-
-    Returns:
-        Tuple of (instance_data, success, error_message)
-    """
     env: FreeEnv | None = None
     debug_logger: DebugGymLogger | None = None
     image_name, seed = jspec
@@ -255,17 +392,9 @@ def process_single_job(
         logdir = Path(logdir)
         image_output_dir = logdir / image_name / f"seed_{seed}"
         image_output_dir.mkdir(exist_ok=True, parents=True)
+        _cleanup_previous_outputs(image_output_dir)
 
-        for stale_file in ("debug_gym.patch", "trajectory.json"):
-            candidate = image_output_dir / stale_file
-            if candidate.exists():
-                candidate.unlink()
-        for stale_dir in ("debug_gym_runs", "debug_gym_logs"):
-            candidate_dir = image_output_dir / stale_dir
-            if candidate_dir.exists():
-                shutil.rmtree(candidate_dir)
-
-        _, _, repo_name, short_commit_sha = image_name.split('.')
+        _, _, repo_name, short_commit_sha = image_name.split(".")
 
         debug_logger = DebugGymLogger(
             f"buggen:{shorten(instance_id, width=40)}",
@@ -275,7 +404,7 @@ def process_single_job(
 
         env = FreeEnv(
             image=image_name,
-            terminal=session_config.env_terminal or BACKEND,
+            terminal=session_config.env_terminal,
             mount_path=None,
             setup_commands=list(session_config.env_setup_commands),
             instructions=session_config.env_instructions,
@@ -296,7 +425,6 @@ def process_single_job(
 
         llm = LLM.instantiate(
             llm_name=model_name,
-            llm_config_file_path=session_config.llm_config_file,
             logger=debug_logger,
         )
         if llm is None:
@@ -361,7 +489,7 @@ def process_single_job(
             return None, False, "Could not find validation run report"
 
         logger.info(f"Found report after running validation check for {jid}")
-        with report_path.open("r") as report_handle:
+        with report_path.open("r", encoding="utf-8") as report_handle:
             report = json.load(report_handle)
         f2p, p2p = report[FAIL_TO_PASS], report[PASS_TO_PASS]
         if KEY_TIMED_OUT in report or len(f2p) == 0 or len(p2p) == 0:
@@ -397,92 +525,63 @@ def process_single_job(
                 fp.seek(0)
                 instance_data = json.load(fp)
                 logger.info(f"Successfully generated issue for {jid}")
-        except Exception as e:
-            logger.error(f"Error generating issue for {jid}: {str(e)}")
+        except Exception as err:  # pragma: no cover - defensive logging
+            logger.error(f"Error generating issue for {jid}: {err}")
             logger.error(traceback.format_exc())
-            return (None, False, f"Error generating issue: {str(e)}")
+            return (None, False, f"Error generating issue: {err}")
 
         return (instance_data, True, None)
 
-    except Exception as e:
+    except Exception as err:  # pragma: no cover - defensive logging
         traceback.print_exc()
-        error_msg = f"Error processing {jid}: {str(e)}"
+        error_msg = f"Error processing {jid}: {err}"
         logger.error(error_msg)
         return (None, False, error_msg)
     finally:
         if env is not None:
             try:
                 env.close()
-            except Exception as exc:
+            except Exception as exc:  # pragma: no cover - best effort close
                 logger.warning(f"Failed to close environment for {jid}: {exc}")
         if debug_logger is not None:
             debug_logger.close()
 
 
 def regular(
-    images: str | Path,
-    model_name: str,
-    output_file: str | Path,
-    run_id: str,
-    logdir: str | Path,
-    seed_per_image: int = 1,
-    max_workers: int = 1,
-    max_tries: int = 1,
-    shuffle: bool = False,
     config: str | Path | None = None,
-    llm_config_file: str | Path | None = None,
-):
-    """
-    Process Docker images in parallel with retry logic using Debug-Gym.
+) -> dict[str, int]:
+    """Entry point for the CLI: parameters now sourced entirely from YAML."""
 
-    Args:
-        images: Path to text file containing newline separated list of images
-        model_name: Model name for the agent
-        output_file: File to store outputs
-        run_id: Name for run
-        seed_per_image: Number of different seeds per image attempt
-        max_workers: Maximum number of parallel workers
-        max_tries: Maximum number of retry attempts per image
-        shuffle: Whether to shuffle the job list
-        config: Optional YAML config with Debug-Gym settings
-        llm_config_file: Optional override for the LLM configuration file path
-    """
+    session_config, runtime_config = load_pipeline_config(config)
 
-    session_config = load_session_config(config)
-    if llm_config_file:
-        session_config = replace(
-            session_config,
-            llm_config_file=str(Path(llm_config_file).resolve()),
-        )
+    model_name = (session_config.llm_name or "").strip()
+    if not model_name:
+        raise ValueError("Model name is required. Set 'llm' in the YAML config.")
 
-    image_names = Path(images).read_text().splitlines()
-    jobs_specs = [
-        (i, str(uuid.uuid4())[:10])
-        for i in image_names
-        for _ in range(seed_per_image)
+    image_names = runtime_config.images_file.read_text().splitlines()
+    jobs_specs: list[JobSpec] = [
+        (image_name, str(uuid.uuid4())[:10])
+        for image_name in image_names
+        for _ in range(runtime_config.seed_per_image)
     ]
 
-    if shuffle:
+    if runtime_config.shuffle:
         random.shuffle(jobs_specs)
 
-    output_file = Path(output_file)
+    output_file = runtime_config.output_file
     output_file.parent.mkdir(exist_ok=True, parents=True)
-    if output_file.exists():
-        with output_file.open("r") as handle:
-            pre_existing_data = json.load(handle)
-        existing_instance_ids = {i['instance_id'] for i in pre_existing_data}
-        jobs_specs = [
-            (i, s)
-            for (i, s) in jobs_specs
-            if create_instance_id(i, s) not in existing_instance_ids
-        ]
 
-    num_jobs = len(jobs_specs)
-    jobs_specs = jobs_specs[:num_jobs]
+    existing_results = _load_existing_results(output_file)
+    existing_instance_ids = {entry["instance_id"] for entry in existing_results}
+    jobs_specs = [
+        jspec
+        for jspec in jobs_specs
+        if create_instance_id(*jspec) not in existing_instance_ids
+    ]
 
     logger.info(
-        f"Processing {len(jobs_specs)} jobs with {max_workers} workers, "
-        f"max {max_tries} tries per job using Debug-Gym pipeline."
+        f"Processing {len(jobs_specs)} jobs with {runtime_config.max_workers} workers, "
+        f"max {runtime_config.max_tries} tries per job using Debug-Gym pipeline."
     )
 
     logger.info("Initializing shared issue generator (loading SWE-bench dataset)...")
@@ -490,26 +589,27 @@ def regular(
         model=model_name,
         use_existing=True,
         n_workers=1,
-        experiment_id=run_id,
+        experiment_id=runtime_config.run_id,
     )
     logger.info("Issue generator initialized and ready")
 
     successful_processes = 0
     failed_processes = 0
-    retry_queue: list[tuple[tuple[str, str], int]] = []
-    current_batch = [(jspec, 1) for jspec in jobs_specs]
+    retry_queue: list[tuple[JobSpec, int]] = []
+    current_batch: list[tuple[JobSpec, int]] = [(jspec, 1) for jspec in jobs_specs]
+    results_lock = threading.Lock()
 
     while current_batch:
         logger.info(f"Processing batch of {len(current_batch)} images...")
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=runtime_config.max_workers) as executor:
             future_to_jspec = {
                 executor.submit(
                     process_single_job,
                     jspec,
-                    logdir,
+                    runtime_config.logdir,
                     model_name,
-                    run_id,
+                    runtime_config.run_id,
                     shared_issue_generator,
                     session_config,
                 ): (jspec, attempt)
@@ -520,29 +620,30 @@ def regular(
                 jspec, attempt = future_to_jspec[future]
                 result, success, error_msg = future.result()
 
-                if success:
+                if success and result is not None:
                     successful_processes += 1
                     logger.info(
-                        f"✓ Completed {jspec} on attempt {attempt} ({successful_processes}/{len(jobs_specs)})"
+                        f"✓ Completed {jspec} on attempt {attempt} "
+                        f"({successful_processes}/{len(jobs_specs)})"
                     )
-                    if output_file.exists():
-                        with output_file.open("r") as handle:
-                            pre_existing_data = json.load(handle)
-                    else:
-                        pre_existing_data = []
-                    pre_existing_data.append(result)
-                    with output_file.open("w") as handle:
-                        json.dump(pre_existing_data, handle, indent=2)
+                    _record_success(
+                        result,
+                        output_file=output_file,
+                        results=existing_results,
+                        lock=results_lock,
+                    )
                 else:
-                    if attempt < max_tries:
+                    if attempt < runtime_config.max_tries:
                         retry_queue.append((jspec, attempt + 1))
                         logger.warning(
-                            f"⚠ Failed {jspec} on attempt {attempt}/{max_tries}: {error_msg}. Will retry."
+                            f"⚠ Failed {jspec} on attempt {attempt}/{runtime_config.max_tries}: "
+                            f"{error_msg}. Will retry."
                         )
                     else:
                         failed_processes += 1
                         logger.error(
-                            f"✗ Failed {jspec} after {max_tries} attempts: {error_msg}. Giving up."
+                            f"✗ Failed {jspec} after {runtime_config.max_tries} attempts: {error_msg}. "
+                            "Giving up."
                         )
 
         current_batch = retry_queue.copy()
@@ -555,9 +656,9 @@ def regular(
     )
 
     return {
-        'successful': successful_processes,
-        'failed': failed_processes,
-        'total': len(jobs_specs),
+        "successful": successful_processes,
+        "failed": failed_processes,
+        "total": len(jobs_specs),
     }
 
 
