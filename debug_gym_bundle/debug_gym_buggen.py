@@ -236,14 +236,80 @@ class CustomIssueGen:
         metadata_path = inst_dir / "metadata.json"
         if self.use_existing and metadata_path.exists():
             metadata = json.loads(metadata_path.read_text())
+        def _append_progress_log(
+            log_path: Path,
+            lock: threading.Lock,
+            entry: dict[str, Any],
+        ) -> None:
+            """Write a single JSON line describing pipeline progress."""
+
+            log_record = dict(entry)
+            log_record.setdefault("timestamp", datetime.now().isoformat())
+            with lock:
+                with log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(log_record) + "\n")
+
+
+        def assess_validation_report(
+            report: dict[str, Any],
+        ) -> tuple[bool, list[str], list[str], str | None]:
+            """Check whether a validation report represents an acceptable bug."""
+
+            f2p: list[str] = report.get(FAIL_TO_PASS, []) or []
+            p2p: list[str] = report.get(PASS_TO_PASS, []) or []
+
+            if KEY_TIMED_OUT in report:
+                return False, f2p, p2p, "Validation timed out"
+            if not f2p:
+                return False, f2p, p2p, "No tests regressed (FAIL_TO_PASS empty)"
+            if not p2p:
+                return False, f2p, p2p, "All tests failed (PASS_TO_PASS empty)"
+            if len(f2p) > MAX_FAILING_TESTS:
+                return (
+                    False,
+                    f2p,
+                    p2p,
+                    f"Too many failing tests ({len(f2p)} > {MAX_FAILING_TESTS})",
+                )
+
+            return True, f2p, p2p, None
+
+
+        def _base_progress_entry(
+            *,
+            run_id: str,
+            instance_id: str,
+            mode: str,
+            image_name: str | None = None,
+            seed: str | None = None,
+            attempt: int | None = None,
+        ) -> dict[str, Any]:
+            """Create a baseline progress record for a given instance."""
+
+            repo_name, commit_sha, parsed_seed = parse_instance_id(instance_id)
+            entry: dict[str, Any] = {
+                "run_id": run_id,
+                "mode": mode,
+                "instance_id": instance_id,
+                "repo": repo_name,
+                "commit": commit_sha,
+                "seed": seed if seed is not None else parsed_seed,
+            }
+            if image_name is not None:
+                entry["image_name"] = image_name
+            if attempt is not None:
+                entry["attempt"] = attempt
+            return entry
+
+
             for key, value in metadata.get("responses", {}).items():
                 instance[key] = value
             return dict(instance)
-
-        messages = self._build_messages(instance)
+        ) -> tuple[dict[str, Any] | None, str | None]:
+            """Convert a validation report directory into ``instance_data`` payload."""
 
         with (inst_dir / "messages.json").open("w", encoding="utf-8") as handle:
-            json.dump(messages, handle, indent=2)
+                return None, "Instance directory missing"
 
         llm = self._ensure_llm()
         if llm is None:
@@ -251,19 +317,15 @@ class CustomIssueGen:
 
         responses: dict[str, str] = {}
         token_stats: list[dict[str, int]] = []
-
+                return None, "Report missing"
         for idx in range(self.n_instructions):
             llm_response = llm(
                 messages=copy.deepcopy(messages),
                 tools=[],
-            )
-            issue_text = llm_response.response or ""
-            key = "problem_statement" if self.n_instructions == 1 else f"ps_basic_{idx}"
-            instance[key] = issue_text
-            responses[key] = issue_text
-
-            if llm_response.token_usage:
-                token_stats.append(
+            is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
+            if not is_buggy:
+                logger.info("Skipping %s: %s", instance_id, rejection_msg)
+                return None, rejection_msg or "Rejected by filters"
                     {
                         "prompt": llm_response.token_usage.prompt or 0,
                         "response": llm_response.token_usage.response or 0,
@@ -752,7 +814,7 @@ def _build_instance_from_logs(
     if agent_uuid:
         instance_data["agent_uuid"] = agent_uuid
 
-    return instance_data
+    return instance_data, None
 
 
 def _generate_issue_payload(
@@ -937,6 +999,8 @@ def generate_issues_from_existing(
     session_config: DebugGymSessionConfig,
     runtime_config: BuggenRuntimeConfig,
     model_name: str,
+    progress_log_path: Path,
+    progress_lock: threading.Lock,
 ) -> dict[str, int]:
     """Produce issue texts for already-validated patches.
 
@@ -977,16 +1041,57 @@ def generate_issues_from_existing(
         instance_id = instance_dir.name
         if instance_id in existing_instance_ids:
             logger.info("Skipping %s, already present in results output", instance_id)
+            _append_progress_log(
+                progress_log_path,
+                progress_lock,
+                {
+                    **_base_progress_entry(
+                        run_id=runtime_config.run_id,
+                        instance_id=instance_id,
+                        mode="issue_only",
+                    ),
+                    "status": "skipped_existing",
+                    "reason": "Already present in results output",
+                },
+            )
             skipped += 1
             continue
 
         try:
-            instance_data = _build_instance_from_logs(instance_dir, runtime_config)
+            instance_data, rejection_msg = _build_instance_from_logs(
+                instance_dir, runtime_config
+            )
             if instance_data is None:
+                _append_progress_log(
+                    progress_log_path,
+                    progress_lock,
+                    {
+                        **_base_progress_entry(
+                            run_id=runtime_config.run_id,
+                            instance_id=instance_id,
+                            mode="issue_only",
+                        ),
+                        "status": "skipped_filtered",
+                        "reason": rejection_msg,
+                    },
+                )
                 skipped += 1
                 continue
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("Failed to prepare %s from existing artifacts: %s", instance_id, exc)
+            _append_progress_log(
+                progress_log_path,
+                progress_lock,
+                {
+                    **_base_progress_entry(
+                        run_id=runtime_config.run_id,
+                        instance_id=instance_id,
+                        mode="issue_only",
+                    ),
+                    "status": "error",
+                    "reason": str(exc),
+                },
+            )
             failures += 1
             continue
 
@@ -995,6 +1100,19 @@ def generate_issues_from_existing(
             instance_data = _generate_issue_payload(issue_generator, instance_data)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("Issue generation failed for %s: %s", instance_id, exc)
+            _append_progress_log(
+                progress_log_path,
+                progress_lock,
+                {
+                    **_base_progress_entry(
+                        run_id=runtime_config.run_id,
+                        instance_id=instance_id,
+                        mode="issue_only",
+                    ),
+                    "status": "error",
+                    "reason": str(exc),
+                },
+            )
             failures += 1
             continue
 
@@ -1003,6 +1121,19 @@ def generate_issues_from_existing(
             output_file=runtime_config.output_file,
             results=existing_results,
             lock=results_lock,
+        )
+        _append_progress_log(
+            progress_log_path,
+            progress_lock,
+            {
+                **_base_progress_entry(
+                    run_id=runtime_config.run_id,
+                    instance_id=instance_data["instance_id"],
+                    mode="issue_only",
+                    image_name=instance_data.get("image_name"),
+                ),
+                "status": "issue_generated",
+            },
         )
         processed += 1
         logger.info("✓ Generated issue for %s (%d total)", instance_id, processed)
@@ -1041,11 +1172,17 @@ def regular(
     if not model_name:
         raise ValueError("Model name is required. Set 'llm' in the YAML config.")
 
+    progress_log_path = runtime_config.output_file.with_suffix(".progress.jsonl")
+    progress_log_path.parent.mkdir(parents=True, exist_ok=True)
+    progress_lock = threading.Lock()
+
     if issue_only:
         return generate_issues_from_existing(
             session_config=session_config,
             runtime_config=runtime_config,
             model_name=model_name,
+            progress_log_path=progress_log_path,
+            progress_lock=progress_lock,
         )
 
     image_names = runtime_config.images_file.read_text().splitlines()
@@ -1063,11 +1200,29 @@ def regular(
 
     existing_results = _load_existing_results(output_file)
     existing_instance_ids = {entry["instance_id"] for entry in existing_results}
-    jobs_specs = [
-        jspec
-        for jspec in jobs_specs
-        if create_instance_id(*jspec) not in existing_instance_ids
-    ]
+
+    filtered_jobs: list[JobSpec] = []
+    for jspec in jobs_specs:
+        instance_id = create_instance_id(*jspec)
+        if instance_id in existing_instance_ids:
+            _append_progress_log(
+                progress_log_path,
+                progress_lock,
+                {
+                    **_base_progress_entry(
+                        run_id=runtime_config.run_id,
+                        instance_id=instance_id,
+                        mode="buggen",
+                        image_name=jspec[0],
+                        seed=jspec[1],
+                    ),
+                    "status": "skipped_existing",
+                    "reason": "Already present in results output",
+                },
+            )
+            continue
+        filtered_jobs.append(jspec)
+    jobs_specs = filtered_jobs
 
     logger.info(
         f"Processing {len(jobs_specs)} jobs with {runtime_config.max_workers} workers, "
@@ -1123,19 +1278,48 @@ def regular(
                         results=existing_results,
                         lock=results_lock,
                     )
+                    _append_progress_log(
+                        progress_log_path,
+                        progress_lock,
+                        {
+                            **_base_progress_entry(
+                                run_id=runtime_config.run_id,
+                                instance_id=result["instance_id"],
+                                mode="buggen",
+                                image_name=jspec[0],
+                                seed=jspec[1],
+                                attempt=attempt,
+                            ),
+                            "status": "issue_generated",
+                        },
+                    )
                 else:
+                    entry = {
+                        **_base_progress_entry(
+                            run_id=runtime_config.run_id,
+                            instance_id=create_instance_id(*jspec),
+                            mode="buggen",
+                            image_name=jspec[0],
+                            seed=jspec[1],
+                            attempt=attempt,
+                        ),
+                        "reason": error_msg,
+                    }
                     if attempt < runtime_config.max_tries:
                         retry_queue.append((jspec, attempt + 1))
                         logger.warning(
                             f"⚠ Failed {jspec} on attempt {attempt}/{runtime_config.max_tries}: "
                             f"{error_msg}. Will retry."
                         )
+                        entry["status"] = "retry_scheduled"
                     else:
                         failed_processes += 1
                         logger.error(
                             f"✗ Failed {jspec} after {runtime_config.max_tries} attempts: {error_msg}. "
                             "Giving up."
                         )
+                        entry["status"] = "failed"
+                    _append_progress_log(progress_log_path, progress_lock, entry)
 
         current_batch = retry_queue.copy()
         retry_queue.clear()
