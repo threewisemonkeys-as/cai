@@ -1,4 +1,4 @@
-llm: gpt-4o
+llm: 4o-az
 
 # Tool names resolved via debug_gym.gym.tools.toolbox.Toolbox
 tools:
