@@ -49,8 +49,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = CUR_DIR / "debug_gym_buggen.yaml"
 
-ISSUE_GEN_CONFIG_FILE_PATH = CUR_DIR / Path("sans_patch_issue_gen.yaml")
-
 JobSpec = tuple[str, str]
 
 
@@ -63,16 +61,18 @@ class CustomIssueGen(IssueGen):
         use_existing: bool,
         n_workers: int,
         experiment_id: Path | str,
+        config_path: Path | str,
     ):
         self.experiment_id = Path(experiment_id)
         self.model = model
         self.use_existing = use_existing
         self.n_workers = n_workers
+        self.config_path = Path(config_path)
 
         # The SWE-bench dataset is required for prompt templates and metadata.
         self.swebv = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
 
-        self.config = yaml.safe_load(ISSUE_GEN_CONFIG_FILE_PATH.read_text())
+        self.config = yaml.safe_load(self.config_path.read_text())
         settings = self.config.get("settings", {})
         self.n_instructions = settings.get("n_instructions", 1)
         self.max_var_tokens = settings.get("max_var_tokens", 10_000)
@@ -99,6 +99,7 @@ class DebugGymSessionConfig:
     env_dir_tree_depth: int
     env_init_git: bool
     agent_config: dict[str, Any]
+    issue_gen_config: Path
 
 
 @dataclass(frozen=True)
@@ -245,6 +246,40 @@ def load_pipeline_config(
     memory_size_raw = agent_cfg.get("memory_size", agent_cfg["max_steps"])
     agent_cfg["memory_size"] = int(memory_size_raw)
 
+    system_prompt = agent_cfg.get("system_prompt")
+    system_prompt_file = agent_cfg.get("system_prompt_file")
+    if system_prompt and system_prompt_file:
+        raise ValueError(
+            "Agent configuration must not specify both 'system_prompt' and 'system_prompt_file'."
+        )
+
+    if system_prompt_file:
+        resolved_prompt_path = _resolve_path(cfg_path, system_prompt_file)
+        if resolved_prompt_path is None or not Path(resolved_prompt_path).exists():
+            raise FileNotFoundError(
+                f"Agent system prompt file not found: {resolved_prompt_path}"
+            )
+        agent_cfg["system_prompt"] = Path(resolved_prompt_path).read_text()
+    elif system_prompt is not None:
+        text_value = str(system_prompt)
+        if text_value.strip():
+            agent_cfg["system_prompt"] = text_value
+        else:
+            agent_cfg.pop("system_prompt", None)
+
+    agent_cfg.pop("system_prompt_file", None)
+
+    issue_gen_config_value = config_data.get("issue_gen_config")
+    if not issue_gen_config_value:
+        raise ValueError("Configuration must specify 'issue_gen_config'.")
+
+    resolved_issue_gen = _resolve_path(cfg_path, issue_gen_config_value)
+    if resolved_issue_gen is None or not Path(resolved_issue_gen).exists():
+        raise FileNotFoundError(
+            f"Issue generator config file not found: {resolved_issue_gen}"
+        )
+    issue_gen_config_resolved = Path(resolved_issue_gen)
+
     run_cfg = config_data.get("run")
     if not isinstance(run_cfg, dict):
         raise ValueError("Configuration must include a 'run' mapping.")
@@ -296,6 +331,7 @@ def load_pipeline_config(
         env_dir_tree_depth=dir_tree_depth,
         env_init_git=init_git,
         agent_config=agent_cfg,
+        issue_gen_config=issue_gen_config_resolved,
     )
 
     runtime_config = BuggenRuntimeConfig(
@@ -590,6 +626,7 @@ def regular(
         use_existing=True,
         n_workers=1,
         experiment_id=runtime_config.run_id,
+        config_path=session_config.issue_gen_config,
     )
     logger.info("Issue generator initialized and ready")
 

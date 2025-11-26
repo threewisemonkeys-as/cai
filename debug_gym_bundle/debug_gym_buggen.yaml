@@ -1,4 +1,5 @@
 llm: 4o-az
+issue_gen_config: sans_patch_issue_gen.yaml
 
 # Tool names resolved via debug_gym.gym.tools.toolbox.Toolbox
 tools:
@@ -9,6 +10,7 @@ tools:
 agent:
   max_steps: 80
   max_rewrite_steps: 40
+  system_prompt_file: free_agent_system_prompt.md
 
 environment:
   terminal: docker

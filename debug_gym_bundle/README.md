@@ -9,6 +9,7 @@ elsewhere (for example into `cai/`) and run `debug_gym_buggen.py` directly.
 - `debug_gym_buggen.py`: main entry point (`regular`) for orchestrating bug generation.
 - `debug_gym_buggen.yaml`: default configuration. All runtime options live here.
 - `free_env_buggen_instructions.md`: instructions read by the Debug-Gym FreeEnv.
+- `free_agent_system_prompt.md`: optional override for the FreeAgent system prompt.
 - `sans_patch_issue_gen.yaml`: SWE-smith issue generation prompt configuration.
 - `swesmith/image_names.txt`: list of SWE-smith images to process.
 - `results/`: destination for generated logs and JSON outputs (initially empty).
@@ -35,8 +36,11 @@ elsewhere (for example into `cai/`) and run `debug_gym_buggen.py` directly.
 ### Updating Configuration
 
 - Change the LLM by editing `llm` inside `debug_gym_buggen.yaml`.
+- Point to an alternate issue-generation template via `issue_gen_config`.
 - Adjust images, output locations, or worker counts in the `run` section.
 - Provide a different instruction file by updating `environment.instructions_file`.
+- Override the agent system prompt by editing `agent.system_prompt_file` or supplying
+   an inline `agent.system_prompt` value.
 
 > Note: The script requires the `fire` package for its CLI interface, plus all
 > Debug-Gym, SWE-bench, and SWE-smith dependencies used in the original repo.
