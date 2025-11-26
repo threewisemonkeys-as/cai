@@ -14,12 +14,11 @@ import json
 import logging
 import random
 import shutil
-import tempfile
 import threading
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
@@ -28,6 +27,7 @@ from typing import Any
 import yaml
 from datasets import load_dataset
 from dotenv import load_dotenv
+from io import StringIO
 from unidiff import PatchSet
 
 from debug_gym.agents.free_agent import FreeAgent
@@ -36,10 +36,22 @@ from debug_gym.gym.tools.toolbox import Toolbox
 from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
-from swebench.harness.constants import FAIL_TO_PASS, LOG_REPORT, PASS_TO_PASS
-from swesmith.constants import KEY_TIMED_OUT, LOG_DIR_RUN_VALIDATION
+from swebench.harness.constants import (
+    FAIL_TO_PASS,
+    KEY_INSTANCE_ID,
+    LOG_REPORT,
+    LOG_TEST_OUTPUT,
+    PASS_TO_PASS,
+)
+from swesmith.constants import (
+    KEY_TIMED_OUT,
+    LOG_DIR_RUN_VALIDATION,
+    LOG_TEST_OUTPUT_PRE_GOLD,
+    TEST_OUTPUT_END,
+    TEST_OUTPUT_START,
+)
 from swesmith.harness.valid import run_validation
-from swesmith.issue_gen.generate import IssueGen
+from swesmith.issue_gen.generate import IssueGen, maybe_shorten
 
 load_dotenv()
 
@@ -48,6 +60,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = CUR_DIR / "debug_gym_buggen.yaml"
+# Bound the number of failing tests we accept for a synthesized bug.
+MAX_FAILING_TESTS = 5
 
 JobSpec = tuple[str, str]
 
@@ -83,6 +97,41 @@ class CustomIssueGen(IssueGen):
         """Avoid cloning missing repositories when generating issues."""
 
         return [], []
+
+    def get_test_output(self, instance: dict) -> str:
+        """Read pytest output produced by the validation pass."""
+
+        repo_key = (instance.get("repo") or "").split("/")[-1]
+        instance_id = instance.get(KEY_INSTANCE_ID) or instance.get("instance_id")
+        if instance_id is None:
+            raise KeyError("instance does not contain KEY_INSTANCE_ID")
+
+        candidate_dirs = [
+            LOG_DIR_RUN_VALIDATION / self.experiment_id / instance_id,
+        ]
+
+        if repo_key:
+            candidate_dirs.append(LOG_DIR_RUN_VALIDATION / repo_key / instance_id)
+
+        for folder in candidate_dirs:
+            for filename in (LOG_TEST_OUTPUT, LOG_TEST_OUTPUT_PRE_GOLD):
+                output_path = folder / filename
+                if output_path.exists():
+                    test_output = output_path.read_text()
+                    start_idx = test_output.find(TEST_OUTPUT_START)
+                    end_idx = test_output.find(TEST_OUTPUT_END)
+                    if start_idx == -1 or end_idx == -1:
+                        return maybe_shorten(test_output, self.max_var_tokens, self.model)
+                    start_idx += len(TEST_OUTPUT_START)
+                    return maybe_shorten(
+                        test_output[start_idx:end_idx],
+                        self.max_var_tokens,
+                        self.model,
+                    )
+
+        raise FileNotFoundError(
+            f"Could not locate validation test output for {instance_id}"
+        )
 
 
 @dataclass(frozen=True)
@@ -139,6 +188,37 @@ def create_instance_id(image_name: str, seed: str) -> str:
 
     _, _, repo_name, short_commit_sha = image_name.split(".")
     return f"{repo_name}.{short_commit_sha}.debuggym.seed_{seed}"
+
+
+def parse_instance_id(instance_id: str) -> tuple[str, str, str]:
+    """Return ``(repo_name, commit_sha, seed)`` extracted from the identifier."""
+
+    try:
+        repo_commit, _, seed_token = instance_id.rpartition(".debuggym.")
+        repo_name, _, commit_sha = repo_commit.rpartition(".")
+        if not seed_token.startswith("seed_"):
+            raise ValueError
+        seed = seed_token.removeprefix("seed_")
+    except ValueError as exc:  # pragma: no cover - defensive guard
+        raise ValueError(f"Unrecognized instance id format: {instance_id}") from exc
+
+    if not repo_name or not commit_sha or not seed:
+        raise ValueError(f"Unrecognized instance id format: {instance_id}")
+
+    return repo_name, commit_sha, seed
+
+
+def locate_image_folder(logdir: Path, repo_name: str, commit_sha: str) -> Path | None:
+    """Return the Debug-Gym output folder that matches the repo/commit."""
+
+    if not logdir.exists():
+        return None
+
+    suffix = f"{repo_name}.{commit_sha}"
+    for candidate in logdir.iterdir():
+        if candidate.is_dir() and candidate.name.endswith(suffix):
+            return candidate
+    return None
 
 
 def _resolve_path(base: Path, maybe_path: str | None) -> str | None:
@@ -348,6 +428,39 @@ def load_pipeline_config(
     return session_config, runtime_config
 
 
+def _extract_agent_metadata(
+    logdir: Path,
+    repo_name: str,
+    commit_sha: str,
+    seed: str,
+) -> tuple[str | None, str | None, Path | None]:
+    """Locate Debug-Gym outputs (patch + agent UUID) for an existing run."""
+
+    image_folder = locate_image_folder(logdir, repo_name, commit_sha)
+    if image_folder is None:
+        return None, None, None
+
+    seed_folder = image_folder / f"seed_{seed}"
+    if not seed_folder.exists():
+        return str(image_folder.name), None, None
+
+    patch_candidates = [
+        seed_folder / "debug_gym.patch",
+        seed_folder / "patch.diff",
+    ]
+    patch_path = next((cand for cand in patch_candidates if cand.exists()), None)
+
+    agent_uuid = None
+    runs_dir = seed_folder / "debug_gym_runs"
+    if runs_dir.exists():
+        for candidate in runs_dir.iterdir():
+            if candidate.is_dir():
+                agent_uuid = candidate.name
+                break
+
+    return str(image_folder.name), agent_uuid, patch_path
+
+
 def derive_agent_seed(seed: str) -> int:
     """Derive a stable integer seed for the agent from a UUID-like string."""
 
@@ -404,6 +517,82 @@ def _record_success(
     with lock:
         results.append(result)
         _persist_results(output_file, results)
+
+
+def _build_instance_from_logs(
+    instance_dir: Path,
+    runtime_config: BuggenRuntimeConfig,
+) -> dict[str, Any] | None:
+    """Convert a validation report directory into ``instance_data`` payload."""
+
+    if not instance_dir.is_dir():
+        return None
+
+    instance_id = instance_dir.name
+    repo_name, commit_sha, seed = parse_instance_id(instance_id)
+
+    report_path = instance_dir / LOG_REPORT
+    if not report_path.exists():
+        logger.info("Skipping %s, report.json missing", instance_id)
+        return None
+
+    with report_path.open("r", encoding="utf-8") as handle:
+        report = json.load(handle)
+
+    f2p = report.get(FAIL_TO_PASS, [])
+    p2p = report.get(PASS_TO_PASS, [])
+    if KEY_TIMED_OUT in report or not f2p or not p2p:
+        logger.info("Skipping %s, report indicates non-buggy result", instance_id)
+        return None
+    if len(f2p) > MAX_FAILING_TESTS:
+        logger.info("Skipping %s, too many failing tests (%d)", instance_id, len(f2p))
+        return None
+
+    image_folder_name, agent_uuid, patch_path = _extract_agent_metadata(
+        runtime_config.logdir,
+        repo_name,
+        commit_sha,
+        seed,
+    )
+
+    patch_candidates = [instance_dir / "patch.diff"]
+    if patch_path is not None:
+        patch_candidates.insert(0, patch_path)
+
+    patch_text = next((cand.read_text() for cand in patch_candidates if cand.exists()), None)
+    if not patch_text:
+        raise FileNotFoundError(f"Could not locate patch artifacts for {instance_id}")
+
+    patch_text = remove_added_test_files(patch_text)
+
+    image_name = image_folder_name or f"swesmith.x86_64.{repo_name}.{commit_sha}"
+
+    instance_data = {
+        "instance_id": instance_id,
+        "repo": f"swesmith/{repo_name}.{commit_sha}",
+        "patch": patch_text,
+        FAIL_TO_PASS: f2p,
+        PASS_TO_PASS: p2p,
+        "created_at": datetime.now().isoformat(),
+        "image_name": image_name,
+        "agent_resolved": None,
+    }
+    if agent_uuid:
+        instance_data["agent_uuid"] = agent_uuid
+
+    return instance_data
+
+
+def _generate_issue_payload(
+    issue_generator: CustomIssueGen,
+    instance_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Run the issue generator and return its JSON payload."""
+
+    buffer = StringIO()
+    issue_generator.generate_issue(instance_data, 0, buffer)
+    buffer.seek(0)
+    return json.loads(buffer.read())
 
 
 def process_single_job(
@@ -528,13 +717,15 @@ def process_single_job(
         with report_path.open("r", encoding="utf-8") as report_handle:
             report = json.load(report_handle)
         f2p, p2p = report[FAIL_TO_PASS], report[PASS_TO_PASS]
-        if KEY_TIMED_OUT in report or len(f2p) == 0 or len(p2p) == 0:
+        if KEY_TIMED_OUT in report or not f2p or not p2p:
             logger.info(f"Generated patch for {jid} not buggy.")
             return None, False, "Generated patch not buggy"
 
-        if len(f2p) > 5:
+        if len(f2p) > MAX_FAILING_TESTS:
             logger.info(
-                f"Generated bug results in more than 5 failing tests for {jid}"
+                "Generated bug results in more than %d failing tests for %s",
+                MAX_FAILING_TESTS,
+                jid,
             )
             return None, False, "Too many failing tests"
 
@@ -554,13 +745,9 @@ def process_single_job(
         logger.info(f"Generating problem description text for {jid}")
 
         try:
-            with tempfile.NamedTemporaryFile(delete_on_close=False, mode="w+") as fp:
-                logger.info(f"Calling issue_generator.generate_issue for {jid}")
-                issue_generator.generate_issue(instance_data, 0, fp)
-                fp.flush()
-                fp.seek(0)
-                instance_data = json.load(fp)
-                logger.info(f"Successfully generated issue for {jid}")
+            logger.info(f"Calling issue_generator.generate_issue for {jid}")
+            instance_data = _generate_issue_payload(issue_generator, instance_data)
+            logger.info(f"Successfully generated issue for {jid}")
         except Exception as err:  # pragma: no cover - defensive logging
             logger.error(f"Error generating issue for {jid}: {err}")
             logger.error(traceback.format_exc())
@@ -583,16 +770,121 @@ def process_single_job(
             debug_logger.close()
 
 
+def generate_issues_from_existing(
+    *,
+    session_config: DebugGymSessionConfig,
+    runtime_config: BuggenRuntimeConfig,
+    model_name: str,
+) -> dict[str, int]:
+    """Produce issue texts for already-validated patches.
+
+    This bypasses the FreeAgent run and consumes data from
+    ``logs/run_validation/<run_id>``. Results are appended to the standard
+    output JSON file so callers can mix live bug generation with this
+    post-processing mode.
+    """
+
+    validations_root = LOG_DIR_RUN_VALIDATION / runtime_config.run_id
+    if not validations_root.exists():
+        raise FileNotFoundError(
+            f"Validation logs for run {runtime_config.run_id} not found at {validations_root}"
+        )
+
+    existing_results = _load_existing_results(runtime_config.output_file)
+    existing_instance_ids = {entry["instance_id"] for entry in existing_results}
+
+    instance_dirs = [path for path in validations_root.iterdir() if path.is_dir()]
+    logger.info(
+        "Found %d existing results; %d instances logged in validation directory.",
+        len(existing_results),
+        len(instance_dirs),
+    )
+
+    issue_generator = CustomIssueGen(
+        model=model_name,
+        use_existing=True,
+        n_workers=1,
+        experiment_id=runtime_config.run_id,
+        config_path=session_config.issue_gen_config,
+    )
+
+    processed = skipped = failures = 0
+    results_lock = threading.Lock()
+
+    for instance_dir in sorted(instance_dirs):
+        instance_id = instance_dir.name
+        if instance_id in existing_instance_ids:
+            logger.info("Skipping %s, already present in results output", instance_id)
+            skipped += 1
+            continue
+
+        try:
+            instance_data = _build_instance_from_logs(instance_dir, runtime_config)
+            if instance_data is None:
+                skipped += 1
+                continue
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error("Failed to prepare %s from existing artifacts: %s", instance_id, exc)
+            failures += 1
+            continue
+
+        try:
+            logger.info("Generating issue for existing instance %s", instance_id)
+            instance_data = _generate_issue_payload(issue_generator, instance_data)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error("Issue generation failed for %s: %s", instance_id, exc)
+            failures += 1
+            continue
+
+        _record_success(
+            instance_data,
+            output_file=runtime_config.output_file,
+            results=existing_results,
+            lock=results_lock,
+        )
+        processed += 1
+        logger.info("✓ Generated issue for %s (%d total)", instance_id, processed)
+
+    logger.info(
+        "Issue-only pass complete. Generated: %d, skipped: %d, failures: %d",
+        processed,
+        skipped,
+        failures,
+    )
+
+    return {"generated": processed, "skipped": skipped, "failed": failures}
+
+
 def regular(
     config: str | Path | None = None,
+    issue_only: bool = False,
+    run_id: str | None = None,
 ) -> dict[str, int]:
-    """Entry point for the CLI: parameters now sourced entirely from YAML."""
+    """Primary CLI entry point.
+
+    Args:
+        config: Optional path to the YAML configuration file.
+        issue_only: When ``True`` skip FreeAgent runs and only generate issues
+            for existing validation artifacts.
+        run_id: Override the ``run.run_id`` from the YAML; useful when
+            reprocessing an earlier validation run.
+    """
 
     session_config, runtime_config = load_pipeline_config(config)
+
+    if run_id:
+        runtime_config = replace(runtime_config, run_id=run_id)
 
     model_name = (session_config.llm_name or "").strip()
     if not model_name:
         raise ValueError("Model name is required. Set 'llm' in the YAML config.")
+
+    if issue_only:
+        return generate_issues_from_existing(
+            session_config=session_config,
+            runtime_config=runtime_config,
+            model_name=model_name,
+        )
 
     image_names = runtime_config.images_file.read_text().splitlines()
     jobs_specs: list[JobSpec] = [
