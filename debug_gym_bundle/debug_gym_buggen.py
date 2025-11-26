@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = CUR_DIR / "debug_gym_buggen.yaml"
 # Bound the number of failing tests we accept for a synthesized bug.
-MAX_FAILING_TESTS = 5
+MAX_FAILING_TESTS = 10
 
 JobSpec = tuple[str, str]
 
@@ -670,6 +670,31 @@ def _record_success(
         _persist_results(output_file, results)
 
 
+def assess_validation_report(
+    report: dict[str, Any],
+) -> tuple[bool, list[str], list[str], str | None]:
+    """Check whether a validation report represents an acceptable bug."""
+
+    f2p: list[str] = report.get(FAIL_TO_PASS, []) or []
+    p2p: list[str] = report.get(PASS_TO_PASS, []) or []
+
+    if KEY_TIMED_OUT in report:
+        return False, f2p, p2p, "Validation timed out"
+    if not f2p:
+        return False, f2p, p2p, "No tests regressed (FAIL_TO_PASS empty)"
+    if not p2p:
+        return False, f2p, p2p, "All tests failed (PASS_TO_PASS empty)"
+    if len(f2p) > MAX_FAILING_TESTS:
+        return (
+            False,
+            f2p,
+            p2p,
+            f"Too many failing tests ({len(f2p)} > {MAX_FAILING_TESTS})",
+        )
+
+    return True, f2p, p2p, None
+
+
 def _build_instance_from_logs(
     instance_dir: Path,
     runtime_config: BuggenRuntimeConfig,
@@ -690,13 +715,9 @@ def _build_instance_from_logs(
     with report_path.open("r", encoding="utf-8") as handle:
         report = json.load(handle)
 
-    f2p = report.get(FAIL_TO_PASS, [])
-    p2p = report.get(PASS_TO_PASS, [])
-    if KEY_TIMED_OUT in report or not f2p or not p2p:
-        logger.info("Skipping %s, report indicates non-buggy result", instance_id)
-        return None
-    if len(f2p) > MAX_FAILING_TESTS:
-        logger.info("Skipping %s, too many failing tests (%d)", instance_id, len(f2p))
+    is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
+    if not is_buggy:
+        logger.info("Skipping %s: %s", instance_id, rejection_msg)
         return None
 
     image_folder_name, agent_uuid, patch_path = _extract_agent_metadata(
@@ -864,18 +885,11 @@ def process_single_job(
         logger.info(f"Found report after running validation check for {jid}")
         with report_path.open("r", encoding="utf-8") as report_handle:
             report = json.load(report_handle)
-        f2p, p2p = report[FAIL_TO_PASS], report[PASS_TO_PASS]
-        if KEY_TIMED_OUT in report or not f2p or not p2p:
-            logger.info(f"Generated patch for {jid} not buggy.")
-            return None, False, "Generated patch not buggy"
-
-        if len(f2p) > MAX_FAILING_TESTS:
-            logger.info(
-                "Generated bug results in more than %d failing tests for %s",
-                MAX_FAILING_TESTS,
-                jid,
-            )
-            return None, False, "Too many failing tests"
+        is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
+        if not is_buggy:
+            message = rejection_msg or "Validation rejected"
+            logger.info("Rejected %s: %s", jid, message)
+            return None, False, message
 
         instance_data = {
             "instance_id": instance_id,
