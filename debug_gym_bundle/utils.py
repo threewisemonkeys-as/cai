@@ -51,34 +51,54 @@ def remove_added_test_files(patch: str) -> str:
 
     try:
         parsed_patch = PatchSet(patch)
-    except ValueError as exc:
+    except Exception as exc:  # pragma: no cover - depends on diff shape
         logger.warning("Failed to parse patch while filtering tests: %s", exc)
         return patch
 
-    filtered_entries = [
-        str(file_patch)
-        for file_patch in parsed_patch
-        if not (
-            file_patch.is_added_file
-            and file_patch.path.endswith(".py")
-            and "test_" in file_patch.path
+    try:
+        file_patches = list(parsed_patch)
+    except Exception as exc:  # pragma: no cover - depends on diff shape
+        logger.warning(
+            "Failed to iterate patch entries while filtering tests: %s", exc
         )
-    ]
+        return patch
+
+    filtered_entries: list[str] = []
+    for file_patch in file_patches:
+        try:
+            if (
+                file_patch.is_added_file
+                and file_patch.path.endswith(".py")
+                and "test_" in file_patch.path
+            ):
+                continue
+            filtered_entries.append(str(file_patch))
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Encountered error while processing patch entry; using original patch: %s",
+                exc,
+            )
+            return patch
 
     if not filtered_entries:
-        logger.debug("No non-test diff hunks remained after filtering; retaining original patch")
+        logger.debug(
+            "No non-test diff hunks remained after filtering; retaining original patch"
+        )
         return patch
 
     rebuilt = "".join(filtered_entries)
     if not rebuilt.strip():
-        logger.warning("Filtered patch rebuild produced empty output; returning original patch")
+        logger.warning(
+            "Filtered patch rebuild produced empty output; returning original patch"
+        )
         return patch
 
     try:
         PatchSet(rebuilt)
-    except ValueError as exc:
+    except Exception as exc:  # pragma: no cover - diff-dependent
         logger.warning(
-            "Filtered patch could not be re-parsed (%s); returning original patch", exc
+            "Filtered patch could not be re-parsed (%s); returning original patch",
+            exc,
         )
         return patch
 
