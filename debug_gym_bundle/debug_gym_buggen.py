@@ -236,96 +236,36 @@ class CustomIssueGen:
         metadata_path = inst_dir / "metadata.json"
         if self.use_existing and metadata_path.exists():
             metadata = json.loads(metadata_path.read_text())
-        def _append_progress_log(
-            log_path: Path,
-            lock: threading.Lock,
-            entry: dict[str, Any],
-        ) -> None:
-            """Write a single JSON line describing pipeline progress."""
-
-            log_record = dict(entry)
-            log_record.setdefault("timestamp", datetime.now().isoformat())
-            with lock:
-                with log_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(log_record) + "\n")
-
-
-        def assess_validation_report(
-            report: dict[str, Any],
-        ) -> tuple[bool, list[str], list[str], str | None]:
-            """Check whether a validation report represents an acceptable bug."""
-
-            f2p: list[str] = report.get(FAIL_TO_PASS, []) or []
-            p2p: list[str] = report.get(PASS_TO_PASS, []) or []
-
-            if KEY_TIMED_OUT in report:
-                return False, f2p, p2p, "Validation timed out"
-            if not f2p:
-                return False, f2p, p2p, "No tests regressed (FAIL_TO_PASS empty)"
-            if not p2p:
-                return False, f2p, p2p, "All tests failed (PASS_TO_PASS empty)"
-            if len(f2p) > MAX_FAILING_TESTS:
-                return (
-                    False,
-                    f2p,
-                    p2p,
-                    f"Too many failing tests ({len(f2p)} > {MAX_FAILING_TESTS})",
-                )
-
-            return True, f2p, p2p, None
-
-
-        def _base_progress_entry(
-            *,
-            run_id: str,
-            instance_id: str,
-            mode: str,
-            image_name: str | None = None,
-            seed: str | None = None,
-            attempt: int | None = None,
-        ) -> dict[str, Any]:
-            """Create a baseline progress record for a given instance."""
-
-            repo_name, commit_sha, parsed_seed = parse_instance_id(instance_id)
-            entry: dict[str, Any] = {
-                "run_id": run_id,
-                "mode": mode,
-                "instance_id": instance_id,
-                "repo": repo_name,
-                "commit": commit_sha,
-                "seed": seed if seed is not None else parsed_seed,
-            }
-            if image_name is not None:
-                entry["image_name"] = image_name
-            if attempt is not None:
-                entry["attempt"] = attempt
-            return entry
-
-
             for key, value in metadata.get("responses", {}).items():
                 instance[key] = value
             return dict(instance)
-        ) -> tuple[dict[str, Any] | None, str | None]:
-            """Convert a validation report directory into ``instance_data`` payload."""
+
+        messages = self._build_messages(instance)
 
         with (inst_dir / "messages.json").open("w", encoding="utf-8") as handle:
-                return None, "Instance directory missing"
+            json.dump(messages, handle, indent=2)
 
         llm = self._ensure_llm()
         if llm is None:
-            raise RuntimeError(f"Failed to instantiate LLM '{self.model}' for issue generation")
+            raise RuntimeError(
+                f"Failed to instantiate LLM '{self.model}' for issue generation"
+            )
 
         responses: dict[str, str] = {}
         token_stats: list[dict[str, int]] = []
-                return None, "Report missing"
+
         for idx in range(self.n_instructions):
             llm_response = llm(
                 messages=copy.deepcopy(messages),
                 tools=[],
-            is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
-            if not is_buggy:
-                logger.info("Skipping %s: %s", instance_id, rejection_msg)
-                return None, rejection_msg or "Rejected by filters"
+            )
+            issue_text = llm_response.response or ""
+            key = "problem_statement" if self.n_instructions == 1 else f"ps_basic_{idx}"
+            instance[key] = issue_text
+            responses[key] = issue_text
+
+            if llm_response.token_usage:
+                token_stats.append(
                     {
                         "prompt": llm_response.token_usage.prompt or 0,
                         "response": llm_response.token_usage.response or 0,
@@ -419,6 +359,47 @@ def parse_instance_id(instance_id: str) -> tuple[str, str, str]:
         raise ValueError(f"Unrecognized instance id format: {instance_id}")
 
     return repo_name, commit_sha, seed
+
+
+def _append_progress_log(
+    log_path: Path,
+    lock: threading.Lock,
+    entry: dict[str, Any],
+) -> None:
+    """Write a single JSON line describing pipeline progress."""
+
+    log_record = dict(entry)
+    log_record.setdefault("timestamp", datetime.now().isoformat())
+    with lock:
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(log_record) + "\n")
+
+
+def _base_progress_entry(
+    *,
+    run_id: str,
+    instance_id: str,
+    mode: str,
+    image_name: str | None = None,
+    seed: str | None = None,
+    attempt: int | None = None,
+) -> dict[str, Any]:
+    """Create a baseline progress record for a given instance."""
+
+    repo_name, commit_sha, parsed_seed = parse_instance_id(instance_id)
+    entry: dict[str, Any] = {
+        "run_id": run_id,
+        "mode": mode,
+        "instance_id": instance_id,
+        "repo": repo_name,
+        "commit": commit_sha,
+        "seed": seed if seed is not None else parsed_seed,
+    }
+    if image_name is not None:
+        entry["image_name"] = image_name
+    if attempt is not None:
+        entry["attempt"] = attempt
+    return entry
 
 
 def locate_image_folder(logdir: Path, repo_name: str, commit_sha: str) -> Path | None:
@@ -760,11 +741,11 @@ def assess_validation_report(
 def _build_instance_from_logs(
     instance_dir: Path,
     runtime_config: BuggenRuntimeConfig,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str | None]:
     """Convert a validation report directory into ``instance_data`` payload."""
 
     if not instance_dir.is_dir():
-        return None
+        return None, "Instance directory missing"
 
     instance_id = instance_dir.name
     repo_name, commit_sha, seed = parse_instance_id(instance_id)
@@ -772,7 +753,7 @@ def _build_instance_from_logs(
     report_path = instance_dir / LOG_REPORT
     if not report_path.exists():
         logger.info("Skipping %s, report.json missing", instance_id)
-        return None
+        return None, "Report missing"
 
     with report_path.open("r", encoding="utf-8") as handle:
         report = json.load(handle)
@@ -780,7 +761,7 @@ def _build_instance_from_logs(
     is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
     if not is_buggy:
         logger.info("Skipping %s: %s", instance_id, rejection_msg)
-        return None
+        return None, rejection_msg or "Rejected by filters"
 
     image_folder_name, agent_uuid, patch_path = _extract_agent_metadata(
         runtime_config.logdir,
