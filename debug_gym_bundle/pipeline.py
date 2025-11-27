@@ -130,6 +130,7 @@ def regular(
                     runtime_config.run_id,
                     shared_issue_generator,
                     session_config,
+                    runtime_config.validation_timeout,
                 ): (jspec, attempt)
                 for jspec, attempt in current_batch
             }

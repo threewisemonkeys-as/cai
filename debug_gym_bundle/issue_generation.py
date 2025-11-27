@@ -131,14 +131,14 @@ class CustomIssueGen:
     def get_test_output(self, instance: dict[str, Any]) -> str:
         """Load the captured test output for the provided instance."""
 
-        from swesmith.constants import (  # local import to avoid cycles
-            LOG_DIR_RUN_VALIDATION,
+        from swesmith.constants import LOG_DIR_RUN_VALIDATION
+        from swebench.harness.constants import (
+            KEY_INSTANCE_ID,
             LOG_TEST_OUTPUT,
             LOG_TEST_OUTPUT_PRE_GOLD,
             TEST_OUTPUT_END,
             TEST_OUTPUT_START,
         )
-        from swebench.harness.constants import KEY_INSTANCE_ID
 
         repo_key = (instance.get("repo") or "").split("/")[-1]
         instance_id = instance.get(KEY_INSTANCE_ID) or instance.get("instance_id")

@@ -45,6 +45,7 @@ def process_single_job(
     run_id: str,
     issue_generator: CustomIssueGen,
     session_config: DebugGymSessionConfig,
+    validation_timeout: int | None,
 ) -> tuple[dict[str, Any] | None, bool, str | None]:
     """Generate, validate, and describe a single potential bug instance."""
 
@@ -150,11 +151,14 @@ def process_single_job(
             from swesmith.harness.valid import run_validation
 
             try:
-                run_validation(
-                    instance=instance_data,
-                    run_id=run_id,
-                    run_min_pregold=True,
-                )
+                run_kwargs = {
+                    "instance": instance_data,
+                    "run_id": run_id,
+                    "run_min_pregold": True,
+                }
+                if validation_timeout is not None:
+                    run_kwargs["timeout"] = validation_timeout
+                run_validation(**run_kwargs)
             except subprocess.CalledProcessError as exc:
                 message = (
                     "Validation command failed (check git/SSH access for SWE-smith"

@@ -45,6 +45,7 @@ class BuggenRuntimeConfig:
     max_workers: int
     max_tries: int
     shuffle: bool
+    validation_timeout: int | None
 
 
 def _resolve_path(base: Path, maybe_path: str | None) -> str | None:
@@ -226,6 +227,16 @@ def load_pipeline_config(
     else:
         shuffle = bool(shuffle_raw)
 
+    timeout_value = run_cfg.get("validation_timeout")
+    validation_timeout: int | None
+    if timeout_value in (None, "", False):
+        validation_timeout = None
+    else:
+        try:
+            validation_timeout = int(timeout_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("run.validation_timeout must be an integer") from exc
+
     session_config = DebugGymSessionConfig(
         llm_name=llm_name,
         tools=tools,
@@ -249,6 +260,7 @@ def load_pipeline_config(
         max_workers=max_workers,
         max_tries=max_tries,
         shuffle=shuffle,
+        validation_timeout=validation_timeout,
     )
 
     return session_config, runtime_config

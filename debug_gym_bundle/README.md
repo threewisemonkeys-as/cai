@@ -48,6 +48,8 @@ pipeline refactored into modular components. You can copy
 - Change the LLM by editing `llm` inside `debug_gym_buggen.yaml`.
 - Point to an alternate issue-generation template via `issue_gen_config`.
 - Adjust images, output locations, or worker counts in the `run` section.
+- Set `validation_timeout` (seconds) inside the `run` section to override the default
+   SWE-smith validation timeout (leave unset to use the library default).
 - Provide a different instruction file by updating `environment.instructions_file`.
 - Override the agent system prompt by editing `agent.system_prompt_file` or supplying
    an inline `agent.system_prompt` value.

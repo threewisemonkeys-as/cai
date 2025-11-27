@@ -28,3 +28,4 @@ run:
   max_workers: 1
   max_tries: 1
   shuffle: false
+  validation_timeout: 300   # 5‑minute per-instance validation window
