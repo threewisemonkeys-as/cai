@@ -13,8 +13,15 @@ from typing import TYPE_CHECKING, Any
 
 from unidiff import PatchSet
 
-from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS
-from swesmith.constants import KEY_TIMED_OUT, LOG_REPORT
+from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS, LOG_REPORT as SWE_LOG_REPORT
+from swesmith.constants import KEY_TIMED_OUT
+
+try:  # Prefer SWESmith's constant when available for backward compatibility
+    from swesmith.constants import LOG_REPORT as SWESMITH_LOG_REPORT  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - SWESmith versions without LOG_REPORT
+    SWESMITH_LOG_REPORT = None
+
+LOG_REPORT = SWESMITH_LOG_REPORT or SWE_LOG_REPORT
 
 logger = logging.getLogger(__name__)
 
