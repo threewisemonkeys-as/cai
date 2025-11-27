@@ -14,6 +14,10 @@ pipeline refactored into modular components. You can copy
 - `processing.py`: execution of a single Debug-Gym run and validation pass.
 - `pipeline.py`: orchestration layer that coordinates multi-image runs.
 - `utils.py`: shared helpers for logging, persistence, and patch handling.
+- `generate_issues_from_logs.py`: replays issue generation against the existing
+   `logs/run_validation` tree so past Debug-Gym runs receive problem statements
+   without re-running the full pipeline. Invoke it with the same YAML config used
+   for `debug_gym_buggen.py` to reuse prompts and output locations.
 - `debug_gym_buggen.yaml`: default configuration. All runtime options live here.
 - `free_env_buggen_instructions.md`: instructions read by the Debug-Gym FreeEnv.
 - `free_agent_system_prompt.md`: optional override for the FreeAgent system prompt.
