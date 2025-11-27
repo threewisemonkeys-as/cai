@@ -29,10 +29,22 @@ if TYPE_CHECKING:
     from .config import BuggenRuntimeConfig
 
 
+def _normalize_image_identifier(image_name: str) -> str:
+    """Strip registry prefixes and tags to recover the SWE-Smith image identifier."""
+
+    # Drop leading registry segment (e.g., ``docker.io/`` or ``jyangballin/``)
+    image_id = image_name.rsplit("/", 1)[-1]
+    # Remove docker tag suffix (e.g., ``:latest``)
+    if ":" in image_id:
+        image_id = image_id.rsplit(":", 1)[0]
+    return image_id
+
+
 def extract_repo_commit(image_name: str) -> tuple[str, str]:
     """Return ``(repo_name, commit_sha)`` derived from a Debug-Gym image name."""
 
-    parts = image_name.split(".")
+    normalized = _normalize_image_identifier(image_name)
+    parts = normalized.split(".")
     if len(parts) < 4:
         raise ValueError(
             "Image name must contain at least four period-delimited segments"

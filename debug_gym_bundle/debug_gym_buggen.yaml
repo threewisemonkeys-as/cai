@@ -16,26 +16,26 @@ agent:
   system_prompt_file: free_agent_system_prompt.md
 
 environment:
-  terminal: docker
-  # type: kubernetes
-  # registry: debuggymacr.azurecr.io
-  # namespace: mtl-cpu-jobs
-  # kube_config: ~/.kube/config
-  # # kube_context: null
-  # pod_spec_kwargs:
-  #   tolerations:
-  #     - key: node.kubernetes.io/disk-pressure
-  #       operator: Exists
-  #       effect: NoExecute
-  #       tolerationSeconds: 10800
-  #     - key: kubernetes.azure.com/scalesetpriority
-  #       operator: Equal
-  #       value: spot
-  #       effect: NoSchedule
-  #     - key: CriticalAddonsOnly
-  #       operator: Equal
-  #       value: "true"
-  #       effect: NoSchedule
+  # terminal: docker
+  type: kubernetes
+  registry: debuggymacr.azurecr.io
+  namespace: mtl-cpu-jobs
+  kube_config: ~/.kube/config
+  # kube_context: null
+  pod_spec_kwargs:
+    tolerations:
+      - key: node.kubernetes.io/disk-pressure
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 10800
+      - key: kubernetes.azure.com/scalesetpriority
+        operator: Equal
+        value: spot
+        effect: NoSchedule
+      - key: CriticalAddonsOnly
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
   workspace_dir: /testbed
   instructions_file: free_env_buggen_instructions.md
 
@@ -45,7 +45,7 @@ run:
   logdir: results/debug_gym_runs
   # run_id: debug-gym-local
   seed_per_image: 5
-  max_workers: 10
+  max_workers: 100
   max_tries: 1
   shuffle: true
   validation_timeout: 300   # 5‑minute per-instance validation window
