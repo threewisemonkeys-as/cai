@@ -26,6 +26,7 @@ from .utils import (
     assess_validation_report,
     create_instance_id,
     derive_agent_seed,
+    extract_repo_commit,
     remove_added_test_files,
 )
 
@@ -58,7 +59,7 @@ def process_single_job(
         image_output_dir.mkdir(exist_ok=True, parents=True)
         _cleanup_previous_outputs(image_output_dir)
 
-        _, _, repo_name, short_commit_sha = image_name.split(".")
+        repo_name, short_commit_sha = extract_repo_commit(image_name)
 
         debug_logger = DebugGymLogger(
             f"buggen:{shorten(instance_id, width=40)}",

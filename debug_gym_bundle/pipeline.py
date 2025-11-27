@@ -81,7 +81,6 @@ def regular(
                     **_base_progress_entry(
                         run_id=runtime_config.run_id,
                         instance_id=instance_id,
-                        mode="buggen",
                         llm_name=model_name,
                         image_name=jspec[0],
                         seed=jspec[1],
@@ -161,7 +160,6 @@ def regular(
                             **_base_progress_entry(
                                 run_id=runtime_config.run_id,
                                 instance_id=result["instance_id"],
-                                mode="buggen",
                                 llm_name=model_name,
                                 image_name=jspec[0],
                                 seed=jspec[1],
@@ -175,7 +173,6 @@ def regular(
                         **_base_progress_entry(
                             run_id=runtime_config.run_id,
                             instance_id=create_instance_id(*jspec),
-                            mode="buggen",
                             llm_name=model_name,
                             image_name=jspec[0],
                             seed=jspec[1],

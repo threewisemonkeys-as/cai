@@ -31,6 +31,21 @@ if TYPE_CHECKING:
 MAX_FAILING_TESTS = 10
 
 
+def extract_repo_commit(image_name: str) -> tuple[str, str]:
+    """Return ``(repo_name, commit_sha)`` derived from a Debug-Gym image name."""
+
+    parts = image_name.split(".")
+    if len(parts) < 4:
+        raise ValueError(
+            "Image name must contain at least four period-delimited segments"
+        )
+    repo_name = parts[-2]
+    commit_sha = parts[-1]
+    if not repo_name or not commit_sha:
+        raise ValueError("Image name is missing repository or commit information")
+    return repo_name, commit_sha
+
+
 def remove_added_test_files(patch: str) -> str:
     """Strip any newly added test files from the generated patch."""
 
@@ -52,7 +67,7 @@ def remove_added_test_files(patch: str) -> str:
 def create_instance_id(image_name: str, seed: str) -> str:
     """Create a unique SWE-bench style identifier for this run."""
 
-    _, _, repo_name, short_commit_sha = image_name.split(".")
+    repo_name, short_commit_sha = extract_repo_commit(image_name)
     return f"{repo_name}.{short_commit_sha}.debuggym.seed_{seed}"
 
 
@@ -92,7 +107,6 @@ def _base_progress_entry(
     *,
     run_id: str,
     instance_id: str,
-    mode: str,
     llm_name: str,
     image_name: str | None = None,
     seed: str | None = None,
@@ -103,7 +117,6 @@ def _base_progress_entry(
     repo_name, commit_sha, parsed_seed = parse_instance_id(instance_id)
     entry: dict[str, Any] = {
         "run_id": run_id,
-        "mode": mode,
         "instance_id": instance_id,
         "repo": repo_name,
         "commit": commit_sha,
