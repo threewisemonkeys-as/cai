@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .config import BuggenRuntimeConfig
 
-MAX_FAILING_TESTS = 10
-
 
 def extract_repo_commit(image_name: str) -> tuple[str, str]:
     """Return ``(repo_name, commit_sha)`` derived from a Debug-Gym image name."""
@@ -280,6 +278,8 @@ def _record_success(
 
 def assess_validation_report(
     report: dict[str, Any],
+    *,
+    max_fail_fraction: float,
 ) -> tuple[bool, list[str], list[str], str | None]:
     """Check whether a validation report represents an acceptable bug."""
 
@@ -292,13 +292,18 @@ def assess_validation_report(
         return False, f2p, p2p, "No tests regressed (FAIL_TO_PASS empty)"
     if not p2p:
         return False, f2p, p2p, "All tests failed (PASS_TO_PASS empty)"
-    if len(f2p) > MAX_FAILING_TESTS:
-        return (
-            False,
-            f2p,
-            p2p,
-            f"Too many failing tests ({len(f2p)} > {MAX_FAILING_TESTS})",
-        )
+    total_checked = len(f2p) + len(p2p)
+    if total_checked > 0:
+        failing_fraction = len(f2p) / total_checked
+        if failing_fraction > max_fail_fraction:
+            percent_failed = failing_fraction * 100
+            percent_limit = max_fail_fraction * 100
+            return (
+                False,
+                f2p,
+                p2p,
+                f"Too many failing tests ({len(f2p)} of {total_checked} = {percent_failed:.1f}% > {percent_limit:.1f}%)",
+            )
 
     return True, f2p, p2p, None
 
@@ -323,7 +328,10 @@ def _build_instance_from_logs(
     with report_path.open("r", encoding="utf-8") as handle:
         report = json.load(handle)
 
-    is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
+    is_buggy, f2p, p2p, rejection_msg = assess_validation_report(
+        report,
+        max_fail_fraction=runtime_config.max_fail_fraction,
+    )
     if not is_buggy:
         logger.info("Skipping %s: %s", instance_id, rejection_msg)
         return None, rejection_msg or "Rejected by filters"

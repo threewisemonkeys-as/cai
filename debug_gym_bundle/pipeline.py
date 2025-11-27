@@ -56,7 +56,7 @@ def regular(
 
     image_names = runtime_config.images_file.read_text().splitlines()
     jobs_specs: list[JobSpec] = [
-        (image_name, str(uuid.uuid4())[:10])
+        (image_name, str(uuid.uuid4())[:20])
         for image_name in image_names
         for _ in range(runtime_config.seed_per_image)
     ]
@@ -131,6 +131,7 @@ def regular(
                     shared_issue_generator,
                     session_config,
                     runtime_config.validation_timeout,
+                    runtime_config.max_fail_fraction,
                 ): (jspec, attempt)
                 for jspec, attempt in current_batch
             }

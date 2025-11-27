@@ -111,6 +111,7 @@ def process_single_job(
     issue_generator: CustomIssueGen,
     session_config: DebugGymSessionConfig,
     validation_timeout: int | None,
+    max_fail_fraction: float,
 ) -> tuple[dict[str, Any] | None, bool, str | None]:
     """Generate, validate, and describe a single potential bug instance."""
 
@@ -260,7 +261,10 @@ def process_single_job(
             )
             logger.error(message)
             return (None, False, f"non_retryable: {message}")
-        is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
+        is_buggy, f2p, p2p, rejection_msg = assess_validation_report(
+            report,
+            max_fail_fraction=max_fail_fraction,
+        )
         if not is_buggy:
             message = rejection_msg or "Validation rejected"
             logger.info("Rejected %s: %s", jid, message)

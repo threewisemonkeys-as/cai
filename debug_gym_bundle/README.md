@@ -54,6 +54,9 @@ pipeline refactored into modular components. You can copy
 - Adjust images, output locations, or worker counts in the `run` section.
 - Set `validation_timeout` (seconds) inside the `run` section to override the default
    SWE-smith validation timeout (leave unset to use the library default).
+- Specify `max_fail_fraction` (0–1] in the `run` section to control how large a
+  regression we accept. The pipeline rejects validation reports where more than that
+  fraction of evaluated tests flip to failing; this field is required.
 - Provide a different instruction file by updating `environment.instructions_file`.
 - Override the agent system prompt by editing `agent.system_prompt_file` or supplying
    an inline `agent.system_prompt` value.

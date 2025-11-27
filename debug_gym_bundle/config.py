@@ -46,6 +46,7 @@ class BuggenRuntimeConfig:
     max_tries: int
     shuffle: bool
     validation_timeout: int | None
+    max_fail_fraction: float
 
 
 def _resolve_path(base: Path, maybe_path: str | None) -> str | None:
@@ -277,6 +278,16 @@ def load_pipeline_config(
         except (TypeError, ValueError) as exc:
             raise ValueError("run.validation_timeout must be an integer") from exc
 
+    if "max_fail_fraction" not in run_cfg:
+        raise ValueError("run.max_fail_fraction must be provided in the configuration")
+    max_fail_fraction_raw = run_cfg.get("max_fail_fraction")
+    try:
+        max_fail_fraction = float(max_fail_fraction_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("run.max_fail_fraction must be a floating point value") from exc
+    if not 0 < max_fail_fraction <= 1:
+        raise ValueError("run.max_fail_fraction must be between 0 and 1 (inclusive of 1)")
+
     session_config = DebugGymSessionConfig(
         llm_name=llm_name,
         tools=tools,
@@ -301,6 +312,7 @@ def load_pipeline_config(
         max_tries=max_tries,
         shuffle=shuffle,
         validation_timeout=validation_timeout,
+        max_fail_fraction=max_fail_fraction,
     )
 
     return session_config, runtime_config
