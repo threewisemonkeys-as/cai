@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
+
+if __package__ in {None, ""}:  # Running as a script; ensure package root is importable
+    package_root = Path(__file__).resolve().parent.parent
+    if str(package_root) not in sys.path:
+        sys.path.insert(0, str(package_root))
 
 from debug_gym_bundle.config import load_pipeline_config
 from debug_gym_bundle.issue_generation import CustomIssueGen
