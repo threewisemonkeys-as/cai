@@ -1,12 +1,19 @@
 # Debug Gym Bug Generation Bundle
 
 This folder contains a self-contained copy of the Debug-Gym bug generation
-pipeline refactored during this session. You can copy `debug_gym_bundle/`
-elsewhere (for example into `cai/`) and run `debug_gym_buggen.py` directly.
+pipeline refactored into modular components. You can copy
+`debug_gym_bundle/` elsewhere (for example into `cai/`) and run
+`debug_gym_buggen.py` directly.
 
 ## Contents
 
-- `debug_gym_buggen.py`: main entry point (`regular`) for orchestrating bug generation.
+- `debug_gym_buggen.py`: main entry point (exposes `regular`) for orchestrating bug generation.
+- `__init__.py`: re-exports `regular` for convenient imports.
+- `config.py`: dataclasses and YAML loader for pipeline configuration.
+- `issue_generation.py`: Debug-Gym powered issue synthesis utilities.
+- `processing.py`: execution of a single Debug-Gym run and validation pass.
+- `pipeline.py`: orchestration layer that coordinates multi-image runs.
+- `utils.py`: shared helpers for logging, persistence, and patch handling.
 - `debug_gym_buggen.yaml`: default configuration. All runtime options live here.
 - `free_env_buggen_instructions.md`: instructions read by the Debug-Gym FreeEnv.
 - `free_agent_system_prompt.md`: optional override for the FreeAgent system prompt.
@@ -18,20 +25,23 @@ elsewhere (for example into `cai/`) and run `debug_gym_buggen.py` directly.
 
 1. Install the same Python environment specified for the parent project
    (see the original repository requirements).
-2. From this directory, launch the pipeline:
+2. Ensure required third-party packages are installed: `fire` for the CLI,
+   plus Debug-Gym, SWE-bench, SWE-smith, Jinja2, Datasets, and Unidiff.
+3. From this directory, launch the pipeline:
 
    ```bash
    python debug_gym_buggen.py
    ```
 
-   or point to a different configuration file:
+   or point to a different configuration file and/or override the run ID:
 
    ```bash
-   python debug_gym_buggen.py --config /path/to/override.yaml
+   python debug_gym_buggen.py --config /path/to/override.yaml --run_id custom-run
    ```
 
-3. Results accumulate in `results/debug_gym_buggen_results.json`.  Log files
-   live in `results/debug_gym_runs/`.
+4. Results accumulate in `results/debug_gym_buggen_results.json`. Log files
+   live in `results/debug_gym_runs/` and per-run progress entries (including the
+   LLM name used) are appended to `results/debug_gym_buggen_results.progress.jsonl`.
 
 ### Updating Configuration
 
@@ -43,4 +53,5 @@ elsewhere (for example into `cai/`) and run `debug_gym_buggen.py` directly.
    an inline `agent.system_prompt` value.
 
 > Note: The script requires the `fire` package for its CLI interface, plus all
-> Debug-Gym, SWE-bench, and SWE-smith dependencies used in the original repo.
+> Debug-Gym, SWE-bench, SWE-smith, and supporting dependencies used in the
+> original repo.
