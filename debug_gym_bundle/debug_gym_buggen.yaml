@@ -24,8 +24,8 @@ run:
   output_file: results/debug_gym_buggen_results.json
   logdir: results/debug_gym_runs
   # run_id: debug-gym-local
-  seed_per_image: 1
-  max_workers: 1
-  max_tries: 1
-  shuffle: false
+  seed_per_image: 5
+  max_workers: 10
+  max_tries: 5
+  shuffle: true
   validation_timeout: 300   # 5‑minute per-instance validation window
