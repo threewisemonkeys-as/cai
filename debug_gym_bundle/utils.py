@@ -49,19 +49,40 @@ def extract_repo_commit(image_name: str) -> tuple[str, str]:
 def remove_added_test_files(patch: str) -> str:
     """Strip any newly added test files from the generated patch."""
 
-    return str(
-        PatchSet(
-            [
-                str(file_patch)
-                for file_patch in PatchSet(patch)
-                if not (
-                    file_patch.is_added_file
-                    and file_patch.path.endswith(".py")
-                    and "test_" in file_patch.path
-                )
-            ]
+    try:
+        parsed_patch = PatchSet(patch)
+    except ValueError as exc:
+        logger.warning("Failed to parse patch while filtering tests: %s", exc)
+        return patch
+
+    filtered_entries = [
+        str(file_patch)
+        for file_patch in parsed_patch
+        if not (
+            file_patch.is_added_file
+            and file_patch.path.endswith(".py")
+            and "test_" in file_patch.path
         )
-    )
+    ]
+
+    if not filtered_entries:
+        logger.debug("No non-test diff hunks remained after filtering; retaining original patch")
+        return patch
+
+    rebuilt = "".join(filtered_entries)
+    if not rebuilt.strip():
+        logger.warning("Filtered patch rebuild produced empty output; returning original patch")
+        return patch
+
+    try:
+        PatchSet(rebuilt)
+    except ValueError as exc:
+        logger.warning(
+            "Filtered patch could not be re-parsed (%s); returning original patch", exc
+        )
+        return patch
+
+    return rebuilt
 
 
 def create_instance_id(image_name: str, seed: str) -> str:

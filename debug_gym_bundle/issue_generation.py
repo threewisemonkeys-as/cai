@@ -132,13 +132,30 @@ class CustomIssueGen:
         """Load the captured test output for the provided instance."""
 
         from swesmith.constants import LOG_DIR_RUN_VALIDATION
-        from swebench.harness.constants import (
-            KEY_INSTANCE_ID,
-            LOG_TEST_OUTPUT,
-            LOG_TEST_OUTPUT_PRE_GOLD,
-            TEST_OUTPUT_END,
-            TEST_OUTPUT_START,
-        )
+        from swebench.harness import constants as swe_constants
+        import swesmith.constants as smith_constants
+
+        KEY_INSTANCE_ID = swe_constants.KEY_INSTANCE_ID
+        LOG_TEST_OUTPUT = swe_constants.LOG_TEST_OUTPUT
+
+        TEST_OUTPUT_START = getattr(swe_constants, "TEST_OUTPUT_START", None)
+        TEST_OUTPUT_END = getattr(swe_constants, "TEST_OUTPUT_END", None)
+
+        candidate_filenames = [LOG_TEST_OUTPUT]
+        _pre_gold = getattr(swe_constants, "LOG_TEST_OUTPUT_PRE_GOLD", None)
+        if _pre_gold is None:
+            _pre_gold = getattr(smith_constants, "LOG_TEST_OUTPUT_PRE_GOLD", None)
+
+        if TEST_OUTPUT_START is None or TEST_OUTPUT_END is None:
+            TEST_OUTPUT_START = TEST_OUTPUT_START or getattr(
+                smith_constants, "TEST_OUTPUT_START", None
+            )
+            TEST_OUTPUT_END = TEST_OUTPUT_END or getattr(
+                smith_constants, "TEST_OUTPUT_END", None
+            )
+
+        if _pre_gold:
+            candidate_filenames.append(_pre_gold)
 
         repo_key = (instance.get("repo") or "").split("/")[-1]
         instance_id = instance.get(KEY_INSTANCE_ID) or instance.get("instance_id")
@@ -151,16 +168,18 @@ class CustomIssueGen:
             candidate_dirs.append(LOG_DIR_RUN_VALIDATION / repo_key / instance_id)
 
         for folder in candidate_dirs:
-            for filename in (LOG_TEST_OUTPUT, LOG_TEST_OUTPUT_PRE_GOLD):
+            for filename in candidate_filenames:
                 output_path = folder / filename
                 if output_path.exists():
                     test_output = output_path.read_text()
-                    start_idx = test_output.find(TEST_OUTPUT_START)
-                    end_idx = test_output.find(TEST_OUTPUT_END)
-                    if start_idx == -1 or end_idx == -1:
-                        return self._maybe_shorten(test_output)
-                    start_idx += len(TEST_OUTPUT_START)
-                    return self._maybe_shorten(test_output[start_idx:end_idx])
+                    if TEST_OUTPUT_START and TEST_OUTPUT_END:
+                        start_idx = test_output.find(TEST_OUTPUT_START)
+                        end_idx = test_output.find(TEST_OUTPUT_END)
+                        if start_idx != -1 and end_idx != -1:
+                            start_idx += len(TEST_OUTPUT_START)
+                            snippet = test_output[start_idx:end_idx]
+                            return self._maybe_shorten(snippet)
+                    return self._maybe_shorten(test_output)
 
         raise FileNotFoundError(
             f"Could not locate validation test output for {instance_id}"
