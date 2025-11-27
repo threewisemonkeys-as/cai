@@ -7,7 +7,8 @@ tools:
   - view
   - rewrite
   - bash
-  - submit
+  - submit:
+      apply_eval: false
 
 agent:
   max_steps: 80

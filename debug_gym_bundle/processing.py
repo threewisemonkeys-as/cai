@@ -10,10 +10,12 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
-from typing import Any
+from typing import Any, Iterable
 
 from debug_gym.agents.free_agent import FreeAgent
 from debug_gym.gym.envs.free_env import FreeEnv
+from debug_gym.gym.terminals import select_terminal
+from debug_gym.gym.terminals.terminal import Terminal
 from debug_gym.gym.tools.toolbox import Toolbox
 from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
@@ -36,6 +38,69 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 JobSpec = tuple[str, str]
+
+
+def _build_terminal(
+    image_name: str,
+    workspace_dir: str,
+    setup_commands: tuple[str, ...],
+    terminal_setting: Terminal | str | dict[str, Any] | None,
+    overrides: dict[str, Any],
+    logger: DebugGymLogger,
+) -> Terminal | None:
+    if isinstance(terminal_setting, Terminal):
+        return terminal_setting
+
+    if terminal_setting is None:
+        terminal_config: dict[str, Any] = {"type": "docker"}
+    elif isinstance(terminal_setting, str):
+        terminal_config = {"type": terminal_setting}
+    else:
+        terminal_config = dict(terminal_setting)
+
+    terminal_config = {**terminal_config, **overrides}
+    terminal_config.setdefault("type", "docker")
+    terminal_config["type"] = str(terminal_config["type"]).lower()
+    terminal_config.setdefault("base_image", image_name)
+    terminal_config.setdefault("working_dir", workspace_dir)
+
+    if setup_commands:
+        terminal_config.setdefault("setup_commands", list(setup_commands))
+
+    return select_terminal(terminal_config, logger=logger)
+
+
+def _add_tools(
+    env: FreeEnv,
+    tool_specs: Iterable[str | dict[str, Any]],
+    logger: DebugGymLogger,
+) -> None:
+    for spec in tool_specs:
+        tool_kwargs: dict[str, Any] = {}
+        if isinstance(spec, dict):
+            if len(spec) != 1:
+                raise ValueError("Tool configuration entries must contain exactly one tool name")
+            name, options = next(iter(spec.items()))
+            tool_name = str(name).strip()
+            if not tool_name:
+                raise ValueError("Tool name in mapping cannot be empty")
+            tool_kwargs = dict(options or {})
+        else:
+            tool_name = str(spec).strip()
+
+        if not tool_name:
+            raise ValueError("Tool names cannot be empty")
+
+        if tool_name == "submit" and "apply_eval" not in tool_kwargs:
+            tool_kwargs = {**tool_kwargs, "apply_eval": False}
+
+        try:
+            env.add_tool(Toolbox.get_tool(tool_name, **tool_kwargs))
+        except ValueError as exc:  # pragma: no cover - validation guard
+            raise RuntimeError(
+                f"Failed to load tool '{tool_name}': {exc}"
+            ) from exc
+        logger.debug("Added tool %s with options %s", tool_name, tool_kwargs)
 
 
 def process_single_job(
@@ -71,26 +136,28 @@ def process_single_job(
         )
         debug_logger.setLevel(logging.INFO)
 
+        terminal = _build_terminal(
+            image_name=image_name,
+            workspace_dir=session_config.env_workspace_dir,
+            setup_commands=session_config.env_setup_commands,
+            terminal_setting=session_config.env_terminal,
+            overrides=session_config.env_terminal_kwargs,
+            logger=debug_logger,
+        )
+
         env = FreeEnv(
             image=image_name,
-            terminal=session_config.env_terminal,
+            terminal=terminal,
             mount_path=None,
             setup_commands=list(session_config.env_setup_commands),
             instructions=session_config.env_instructions,
             init_git=session_config.env_init_git,
             workspace_dir=session_config.env_workspace_dir,
             logger=debug_logger,
-            terminal_kwargs=session_config.env_terminal_kwargs,
             dir_tree_depth=session_config.env_dir_tree_depth,
         )
 
-        for tool_name in session_config.tools:
-            try:
-                env.add_tool(Toolbox.get_tool(tool_name))
-            except ValueError as exc:
-                raise RuntimeError(
-                    f"Failed to load tool '{tool_name}': {exc}"
-                ) from exc
+        _add_tools(env, session_config.tools, debug_logger)
 
         llm = LLM.instantiate(
             llm_name=model_name,

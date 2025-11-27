@@ -21,8 +21,8 @@ class DebugGymSessionConfig:
     """Runtime configuration for FreeEnv, FreeAgent, and supporting tools."""
 
     llm_name: str | None
-    tools: tuple[str, ...]
-    env_terminal: str
+    tools: tuple[str | dict[str, Any], ...]
+    env_terminal: str | dict[str, Any] | None
     env_workspace_dir: str
     env_instructions: str
     env_setup_commands: tuple[str, ...]
@@ -74,21 +74,61 @@ def load_pipeline_config(
     if llm_name is not None:
         llm_name = str(llm_name).strip() or None
 
-    tools = config_data.get("tools")
-    if not tools:
+    tools_cfg = config_data.get("tools")
+    if not tools_cfg:
         raise ValueError("Configuration must specify a non-empty 'tools' list.")
-    tools = tuple(str(tool).strip() for tool in tools if str(tool).strip())
-    if not tools:
-        raise ValueError("Configuration produced an empty tool list after stripping values.")
+    if not isinstance(tools_cfg, (list, tuple)):
+        raise ValueError("Configuration 'tools' must be a list of tool names or mappings.")
+
+    normalized_tools: list[str | dict[str, Any]] = []
+    for entry in tools_cfg:
+        if isinstance(entry, str):
+            tool_name = entry.strip()
+            if tool_name:
+                normalized_tools.append(tool_name)
+            continue
+
+        if isinstance(entry, dict):
+            if len(entry) != 1:
+                raise ValueError("Each tool mapping must contain exactly one tool name")
+            name, options = next(iter(entry.items()))
+            tool_name = str(name).strip()
+            if not tool_name:
+                raise ValueError("Tool name in mapping cannot be empty")
+            if options is None:
+                normalized_tools.append({tool_name: {}})
+            else:
+                if not isinstance(options, dict):
+                    raise ValueError(
+                        f"Configuration for tool '{tool_name}' must be a mapping of options"
+                    )
+                normalized_tools.append({tool_name: dict(options)})
+            continue
+
+        raise ValueError("Tool entries must be strings or single-key mappings")
+
+    if not normalized_tools:
+        raise ValueError(
+            "Configuration produced an empty tool list after processing entries."
+        )
+
+    tools = tuple(normalized_tools)
 
     env_cfg = config_data.get("environment")
     if not isinstance(env_cfg, dict):
         raise ValueError("Configuration must include an 'environment' mapping.")
 
     terminal_cfg = env_cfg.get("terminal")
-    terminal = str(terminal_cfg).strip() if terminal_cfg is not None else "docker"
-    if not terminal:
-        terminal = "docker"
+    if terminal_cfg is None:
+        terminal: str | dict[str, Any] | None = "docker"
+    elif isinstance(terminal_cfg, str):
+        terminal = terminal_cfg.strip() or "docker"
+    elif isinstance(terminal_cfg, dict):
+        terminal = dict(terminal_cfg)
+    else:
+        raise ValueError(
+            "environment.terminal must be a string, mapping, or omitted.",
+        )
 
     workspace_cfg = env_cfg.get("workspace_dir")
     if workspace_cfg is None:
