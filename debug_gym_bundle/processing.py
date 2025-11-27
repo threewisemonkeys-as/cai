@@ -18,6 +18,7 @@ from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
 from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS
+from swesmith.constants import LOG_DIR_RUN_VALIDATION
 
 from .config import DebugGymSessionConfig
 from .issue_generation import CustomIssueGen, _generate_issue_payload
@@ -27,6 +28,7 @@ from .utils import (
     create_instance_id,
     derive_agent_seed,
     extract_repo_commit,
+    LOG_REPORT,
     remove_added_test_files,
 )
 
@@ -135,8 +137,6 @@ def process_single_job(
             image_name,
             seed,
         )
-        from swesmith.constants import LOG_DIR_RUN_VALIDATION, LOG_REPORT
-
         report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
 
         if not report_path.exists():
