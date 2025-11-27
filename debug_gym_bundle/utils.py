@@ -51,58 +51,61 @@ def remove_added_test_files(patch: str) -> str:
 
     try:
         parsed_patch = PatchSet(patch)
-    except Exception as exc:  # pragma: no cover - depends on diff shape
-        logger.warning("Failed to parse patch while filtering tests: %s", exc)
-        return patch
-
-    try:
-        file_patches = list(parsed_patch)
-    except Exception as exc:  # pragma: no cover - depends on diff shape
-        logger.warning(
-            "Failed to iterate patch entries while filtering tests: %s", exc
-        )
-        return patch
-
-    filtered_entries: list[str] = []
-    for file_patch in file_patches:
         try:
-            if (
-                file_patch.is_added_file
-                and file_patch.path.endswith(".py")
-                and "test_" in file_patch.path
-            ):
-                continue
-            filtered_entries.append(str(file_patch))
-        except Exception as exc:  # pragma: no cover - defensive guard
+            file_patches = list(parsed_patch)
+        except Exception as exc:  # pragma: no cover - depends on diff shape
             logger.warning(
-                "Encountered error while processing patch entry; using original patch: %s",
+                "Failed to iterate patch entries while filtering tests: %s", exc
+            )
+            return patch
+
+        filtered_entries: list[str] = []
+        for file_patch in file_patches:
+            try:
+                if (
+                    file_patch.is_added_file
+                    and file_patch.path.endswith(".py")
+                    and "test_" in file_patch.path
+                ):
+                    continue
+                filtered_entries.append(str(file_patch))
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.warning(
+                    "Encountered error while processing patch entry; using original patch: %s",
+                    exc,
+                )
+                return patch
+
+        if not filtered_entries:
+            logger.debug(
+                "No non-test diff hunks remained after filtering; retaining original patch"
+            )
+            return patch
+
+        rebuilt = "".join(filtered_entries)
+        if not rebuilt.strip():
+            logger.warning(
+                "Filtered patch rebuild produced empty output; returning original patch"
+            )
+            return patch
+
+        try:
+            PatchSet(rebuilt)
+        except Exception as exc:  # pragma: no cover - diff-dependent
+            logger.warning(
+                "Filtered patch could not be re-parsed (%s); returning original patch",
                 exc,
             )
             return patch
 
-    if not filtered_entries:
-        logger.debug(
-            "No non-test diff hunks remained after filtering; retaining original patch"
-        )
-        return patch
+        return rebuilt
 
-    rebuilt = "".join(filtered_entries)
-    if not rebuilt.strip():
-        logger.warning(
-            "Filtered patch rebuild produced empty output; returning original patch"
-        )
-        return patch
-
-    try:
-        PatchSet(rebuilt)
     except Exception as exc:  # pragma: no cover - diff-dependent
         logger.warning(
-            "Filtered patch could not be re-parsed (%s); returning original patch",
+            "Unexpected error while filtering patch; returning original patch: %s",
             exc,
         )
         return patch
-
-    return rebuilt
 
 
 def create_instance_id(image_name: str, seed: str) -> str:

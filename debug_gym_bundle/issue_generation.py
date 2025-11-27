@@ -237,10 +237,16 @@ class CustomIssueGen:
 
         metadata_path = inst_dir / "metadata.json"
         if self.use_existing and metadata_path.exists():
-            metadata = json.loads(metadata_path.read_text())
-            for key, value in metadata.get("responses", {}).items():
-                instance[key] = value
-            return dict(instance)
+            try:
+                metadata = json.loads(metadata_path.read_text())
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "Corrupt metadata for %s (%s); regenerating", instance_id, exc
+                )
+            else:
+                for key, value in metadata.get("responses", {}).items():
+                    instance[key] = value
+                return dict(instance)
 
         messages = self._build_messages(instance)
 
