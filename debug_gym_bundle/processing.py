@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
@@ -148,11 +149,30 @@ def process_single_job(
             }
             from swesmith.harness.valid import run_validation
 
-            run_validation(
-                instance=instance_data,
-                run_id=run_id,
-                run_min_pregold=True,
-            )
+            try:
+                run_validation(
+                    instance=instance_data,
+                    run_id=run_id,
+                    run_min_pregold=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                message = (
+                    "Validation command failed (check git/SSH access for SWE-smith"
+                    f" repos): {exc}"
+                )
+                logger.error(message)
+                return (None, False, f"non_retryable: {message}")
+            except FileNotFoundError as exc:
+                message = (
+                    "Validation artifacts missing after run (likely clone failure); "
+                    f"expected file not found: {exc}"
+                )
+                logger.error(message)
+                return (None, False, f"non_retryable: {message}")
+            except Exception as exc:  # pragma: no cover - defensive guard
+                message = f"Validation routine raised unexpected error: {exc}"
+                logger.exception(message)
+                return (None, False, f"non_retryable: {message}")
 
         if not report_path.exists():
             logger.info("Could not find validation run report for %s", jid)

@@ -138,6 +138,12 @@ def regular(
                 jspec, attempt = future_to_jspec[future]
                 result, success, error_msg = future.result()
 
+                retryable = True
+                reason = error_msg
+                if error_msg and error_msg.startswith("non_retryable:"):
+                    retryable = False
+                    reason = error_msg.removeprefix("non_retryable:").strip()
+
                 if success and result is not None:
                     successful_processes += 1
                     logger.info(
@@ -178,16 +184,16 @@ def regular(
                             seed=jspec[1],
                             attempt=attempt,
                         ),
-                        "reason": error_msg,
+                        "reason": reason,
                     }
-                    if attempt < runtime_config.max_tries:
+                    if retryable and attempt < runtime_config.max_tries:
                         retry_queue.append((jspec, attempt + 1))
                         logger.warning(
                             "⚠ Failed %s on attempt %d/%d: %s. Will retry.",
                             jspec,
                             attempt,
                             runtime_config.max_tries,
-                            error_msg,
+                            reason,
                         )
                         entry["status"] = "retry_scheduled"
                     else:
@@ -196,7 +202,7 @@ def regular(
                             "✗ Failed %s after %d attempts: %s. Giving up.",
                             jspec,
                             runtime_config.max_tries,
-                            error_msg,
+                            reason,
                         )
                         entry["status"] = "failed"
                     _append_progress_log(progress_log_path, progress_lock, entry)
