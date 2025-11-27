@@ -183,8 +183,16 @@ def process_single_job(
             return None, False, "Could not find validation run report"
 
         logger.info("Found report after running validation check for %s", jid)
-        with report_path.open("r", encoding="utf-8") as report_handle:
-            report = json.load(report_handle)
+        try:
+            with report_path.open("r", encoding="utf-8") as report_handle:
+                report = json.load(report_handle)
+        except json.JSONDecodeError as exc:
+            message = (
+                "Validation report is not valid JSON; treating as non-retryable: "
+                f"{exc}"
+            )
+            logger.error(message)
+            return (None, False, f"non_retryable: {message}")
         is_buggy, f2p, p2p, rejection_msg = assess_validation_report(report)
         if not is_buggy:
             message = rejection_msg or "Validation rejected"

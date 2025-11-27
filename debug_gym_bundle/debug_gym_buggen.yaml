@@ -26,6 +26,6 @@ run:
   # run_id: debug-gym-local
   seed_per_image: 5
   max_workers: 10
-  max_tries: 5
+  max_tries: 1
   shuffle: true
   validation_timeout: 300   # 5‑minute per-instance validation window
