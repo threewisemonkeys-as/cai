@@ -3,6 +3,8 @@ issue_gen_config: sans_patch_issue_gen.yaml
 
 # Tool names resolved via debug_gym.gym.tools.toolbox.Toolbox
 tools:
+  - listdir
+  - view
   - rewrite
   - bash
   - submit

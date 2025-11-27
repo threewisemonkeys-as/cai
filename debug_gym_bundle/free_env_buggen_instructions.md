@@ -3,7 +3,7 @@ I have uploaded a python code repository in the /testbed directory.
 Your task is to implement a new feature in this codebase.
 First go through the codebase and identify a suitable new feature to add.
 Come up with a plan to implement it and then make the necessary changes to the codebase.
-You can use the tools provided to edit files, run tests, and submit your changes.
+You can use the tools provided to edit files and submit your changes.
 Do not make edits to pre-existing tests. Pre-existing tests in the repo should be left alone.
 The feature you introduce should not break any existing functionality. 
 You should prioritize to re-use existing helper functions and code patterns in the repo, you can make changes to existing helper functions if needed to support the new feature.
@@ -24,18 +24,20 @@ Follow these steps to resolve the issue:
 3. Implement your solution:
     - Make targeted changes to the necessary files following idiomatic code patterns once you determine the root cause.
     - You should be thorough and methodical.
+    - The `rewrite` tool requires line numbers, if you are unsure about the line numbers, use the `view` tool to view a file with line numbers.
 
 4. Verify your solution:
+    - Make sure your code modification is syntactically correct, you can try to compile the file. 
     - Double check the code modification you have made so it correctly implements the planned feature.
-    - DO NOT MODIFY any of the existing unit tests. You can add tests in a separate file if needed BUT DO NOT MODIFY THE EXISTING TESTS.
+    - DO NOT MODIFY any of the existing unit tests. 
 
 5. Submit your solution:
     - Once you have verified your solution, submit your solution using the `submit` tool.
 
 Additional recommendations:
 - You should be thorough, methodical, and prioritize quality over speed. Be comprehensive.
-- You should think carefully before making the tool call about what should be done. However, each step should only use one tool call. YOU SHOULD NOT USE TOOLS INSIDE YOUR THOUGHT PROCESS. YOU SHOULD PRIMARILY USE THINKING FOR IDENTIFYING THE ROOT CAUSE OF THE ISSUE, MAKING THE CHANGES, AND CREATING TEST CASES (REPRODUCTION OR EDGE CASES).
-- Each action you take is somewhat expensive. Wherever possible, combine multiple actions into a single action (e.g., combine multiple bash commands, use sed/grep for bulk operations). 
+- You should think carefully before making the tool call about what should be done. However, each step should only use one tool call. YOU SHOULD NOT USE TOOLS INSIDE YOUR THOUGHT PROCESS. 
+- Each action you take is somewhat expensive, avoid repeating yourself unless necessary. 
     - Your grep commands should identify both relevant files and line numbers so you can use the file_editor tool.
     - Use grep with `-A -B -C` flags to quickly identify the relevant code blocks during your exploration.
 - When exploring the codebase, use targeted search patterns to minimize unnecessary operations.
