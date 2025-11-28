@@ -9,6 +9,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from .config import BuggenRuntimeConfig, DebugGymSessionConfig, load_pipeline_config
 from .issue_generation import CustomIssueGen
@@ -93,14 +94,51 @@ def regular(
         filtered_jobs.append(jspec)
     jobs_specs = filtered_jobs
 
-    logger.info(
+    progress_bar = None
+
+    def _log(level: int, msg: str, *args: Any) -> None:
+        if progress_bar is not None:
+            try:
+                rendered = msg % args if args else msg
+            except TypeError:
+                rendered = msg.format(*args)
+            progress_bar.write(f"[{logging.getLevelName(level)}] {rendered}")
+        else:
+            logger.log(level, msg, *args)
+
+    def info(msg: str, *args: Any) -> None:
+        _log(logging.INFO, msg, *args)
+
+    def warning(msg: str, *args: Any) -> None:
+        _log(logging.WARNING, msg, *args)
+
+    def error(msg: str, *args: Any) -> None:
+        _log(logging.ERROR, msg, *args)
+
+    if runtime_config.show_progress and jobs_specs:
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:  # pragma: no cover - fallback when tqdm missing
+            warning(
+                "Progress display requested but tqdm is not installed; continuing without progress bar.",
+            )
+        else:
+            progress_bar = tqdm(
+                total=len(jobs_specs),
+                desc="Buggen Jobs",
+                unit="job",
+                dynamic_ncols=True,
+                leave=True,
+            )
+
+    info(
         "Processing %d jobs with %d workers, max %d tries per job using Debug-Gym pipeline.",
         len(jobs_specs),
         runtime_config.max_workers,
         runtime_config.max_tries,
     )
 
-    logger.info("Initializing shared issue generator (loading SWE-bench dataset)...")
+    info("Initializing shared issue generator (loading SWE-bench dataset)...")
     shared_issue_generator = CustomIssueGen(
         model=model_name,
         use_existing=True,
@@ -109,7 +147,7 @@ def regular(
         config_path=session_config.issue_gen_config,
     )
     # Reuse a single issue generator so the SWE-bench dataset and LLM stay warm.
-    logger.info("Issue generator initialized and ready")
+    info("Issue generator initialized and ready")
 
     successful_processes = 0
     failed_processes = 0
@@ -118,7 +156,7 @@ def regular(
     results_lock = threading.Lock()
 
     while current_batch:
-        logger.info("Processing batch of %d images...", len(current_batch))
+        info("Processing batch of %d images...", len(current_batch))
 
         with ThreadPoolExecutor(max_workers=runtime_config.max_workers) as executor:
             future_to_jspec = {
@@ -148,7 +186,7 @@ def regular(
 
                 if success and result is not None:
                     successful_processes += 1
-                    logger.info(
+                    info(
                         "✓ Completed %s on attempt %d (%d/%d)",
                         jspec,
                         attempt,
@@ -176,6 +214,13 @@ def regular(
                             "status": "issue_generated",
                         },
                     )
+                    if progress_bar is not None:
+                        progress_bar.update(1)
+                        progress_bar.set_postfix(
+                            success=successful_processes,
+                            failed=failed_processes,
+                            retries=len(retry_queue),
+                        )
                 else:
                     entry = {
                         **_base_progress_entry(
@@ -190,7 +235,7 @@ def regular(
                     }
                     if retryable and attempt < runtime_config.max_tries:
                         retry_queue.append((jspec, attempt + 1))
-                        logger.warning(
+                        warning(
                             "⚠ Failed %s on attempt %d/%d: %s. Will retry.",
                             jspec,
                             attempt,
@@ -198,22 +243,39 @@ def regular(
                             reason,
                         )
                         entry["status"] = "retry_scheduled"
+                        if progress_bar is not None:
+                            progress_bar.set_postfix(
+                                success=successful_processes,
+                                failed=failed_processes,
+                                retries=len(retry_queue),
+                            )
                     else:
                         failed_processes += 1
-                        logger.error(
+                        error(
                             "✗ Failed %s after %d attempts: %s. Giving up.",
                             jspec,
                             runtime_config.max_tries,
                             reason,
                         )
                         entry["status"] = "failed"
+                        if progress_bar is not None:
+                            progress_bar.update(1)
+                            progress_bar.set_postfix(
+                                success=successful_processes,
+                                failed=failed_processes,
+                                retries=len(retry_queue),
+                            )
                     _append_progress_log(progress_log_path, progress_lock, entry)
 
         current_batch = retry_queue.copy()
         retry_queue.clear()
 
     total_processed = successful_processes + failed_processes
-    logger.info(
+    if progress_bar is not None:
+        progress_bar.close()
+        progress_bar = None
+
+    info(
         "Processing complete! Success: %d, Failed: %d, Total attempted: %d",
         successful_processes,
         failed_processes,

@@ -45,6 +45,7 @@ class BuggenRuntimeConfig:
     max_workers: int
     max_tries: int
     shuffle: bool
+    show_progress: bool
     validation_timeout: int | None
     max_fail_fraction: float
 
@@ -284,6 +285,12 @@ def load_pipeline_config(
     else:
         shuffle = bool(shuffle_raw)
 
+    show_progress_raw = run_cfg.get("show_progress", True)
+    if isinstance(show_progress_raw, str):
+        show_progress = show_progress_raw.strip().lower() not in {"0", "false", "no", "off"}
+    else:
+        show_progress = bool(show_progress_raw)
+
     timeout_value = run_cfg.get("validation_timeout")
     validation_timeout: int | None
     if timeout_value in (None, "", False):
@@ -327,6 +334,7 @@ def load_pipeline_config(
         max_workers=max_workers,
         max_tries=max_tries,
         shuffle=shuffle,
+        show_progress=show_progress,
         validation_timeout=validation_timeout,
         max_fail_fraction=max_fail_fraction,
     )
