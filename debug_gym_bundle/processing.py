@@ -33,7 +33,7 @@ from .utils import (
     LOG_REPORT,
     remove_added_test_files,
 )
-from .validation import REGISTRY_CACHE, ensure_validation_registry_support, run_validation
+from .validation import ensure_validation_registry_support, run_validation
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +227,6 @@ def process_single_job(
             }
             if registry_value is not None:
                 instance_data["image_registry"] = registry_value
-                REGISTRY_CACHE.setdefault(image_name, registry_value)
 
             try:
                 run_kwargs = {

@@ -41,6 +41,17 @@ from swesmith.constants import (
     TIMEOUT,
 )
 
+try:
+    from docker.utils import parse_repository_tag
+except ImportError:  # pragma: no cover - defensive fallback
+    def parse_repository_tag(ref: str) -> tuple[str, str | None]:
+        if "@" in ref:  # digest form
+            return ref, None
+        if ":" in ref and "/" not in ref.rsplit(":", 1)[1]:
+            repo, tag = ref.rsplit(":", 1)
+            return repo, tag
+        return ref, None
+
 try:  # SWE-smith is installed alongside Debug-Gym in bug-gen pipeline
     from swesmith.harness import utils as _swesmith_utils
     from swesmith.harness import valid as _swesmith_valid
@@ -60,6 +71,82 @@ logger = logging.getLogger(__name__)
 
 REGISTRY_CACHE: dict[str, str] = {}
 _REGISTRY_PATCH_APPLIED = False
+
+
+def _split_repo_and_tag(image_ref: str) -> tuple[str, str | None]:
+    repo, tag = parse_repository_tag(image_ref)
+    if tag == "":  # pragma: no cover - older docker returns empty string
+        tag = None
+    return repo, tag
+
+
+def _canonical_image_key(image_ref: str) -> str:
+    repo, _ = _split_repo_and_tag(image_ref)
+    _, _, base = repo.rpartition("/")
+    if not base:
+        base = repo
+    return base.replace("_1776_", "__")
+
+
+def _repo_variants(image_ref: str) -> tuple[list[str], str | None]:
+    repo, tag = _split_repo_and_tag(image_ref)
+    prefix, _, base = repo.rpartition("/")
+    if not base:
+        base = repo
+        prefix = ""
+
+    base_variants = {base}
+    if "_1776_" in base:
+        base_variants.add(base.replace("_1776_", "__"))
+    if "__" in base:
+        base_variants.add(base.replace("__", "_1776_"))
+
+    variants: list[str] = []
+    for candidate in base_variants:
+        if prefix:
+            variants.append(f"{prefix}/{candidate}")
+        else:
+            variants.append(candidate)
+    return variants, tag
+
+
+def _infer_registry_host(image_ref: str) -> str | None:
+    repo, _ = _split_repo_and_tag(image_ref)
+    first_segment = repo.split("/", 1)[0]
+    if "." in first_segment or ":" in first_segment:
+        return first_segment
+    return None
+
+
+def _candidate_image_refs(
+    image_ref: str,
+    registry_value: str | None,
+) -> list[str]:
+    repo_variants, tag = _repo_variants(image_ref)
+    tag_suffix = f":{tag}" if tag else ""
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    normalized_registry = registry_value.rstrip("/") if registry_value else None
+
+    if normalized_registry:
+        for variant in repo_variants:
+            if variant.startswith(f"{normalized_registry}/"):  # already absolute
+                candidate = f"{variant}{tag_suffix}"
+            else:
+                candidate = f"{normalized_registry}/{variant}{tag_suffix}"
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+
+    for variant in repo_variants:
+        candidate = f"{variant}{tag_suffix}"
+        if candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
+
+    return candidates
 
 
 def ensure_validation_registry_support() -> None:
@@ -84,13 +171,15 @@ def ensure_validation_registry_support() -> None:
         client = docker.from_env()
         instance_id = instance[KEY_INSTANCE_ID]
         image_name = instance[KEY_IMAGE_NAME]
+        raw_image = instance.get("raw_image_name", image_name)
         registry_value = instance.get("image_registry")
         if registry_value:
             REGISTRY_CACHE[image_name] = str(registry_value).strip()
-        registry_prefix = REGISTRY_CACHE.get(image_name, "")
-        resolved_image = (
-            f"{registry_prefix.rstrip('/')}/{image_name}" if registry_prefix else image_name
-        )
+        registry_prefix = REGISTRY_CACHE.get(image_name)
+        if registry_prefix:
+            registry_prefix = str(registry_prefix).strip()
+        else:
+            registry_prefix = None
         container_logger = None
 
         try:
@@ -106,15 +195,45 @@ def ensure_validation_registry_support() -> None:
             log_file = run_log_dir / LOG_INSTANCE
             container_logger = setup_logger(container_name, log_file)
 
-            container = client.containers.create(
-                image=resolved_image,
-                name=container_name,
-                user=DOCKER_USER,
-                detach=True,
-                command="tail -f /dev/null",
-                platform="linux/x86_64",
-                mem_limit="10g",
-            )
+            resolved_image: str | None = None
+            last_error: Exception | None = None
+            candidate_refs = _candidate_image_refs(raw_image, registry_prefix)
+
+            for candidate in candidate_refs:
+                try:
+                    container = client.containers.create(
+                        image=candidate,
+                        name=container_name,
+                        user=DOCKER_USER,
+                        detach=True,
+                        command="tail -f /dev/null",
+                        platform="linux/x86_64",
+                        mem_limit="10g",
+                    )
+                    resolved_image = candidate
+                    container_logger.info(
+                        "Created container for %s using image '%s'", instance_id, candidate
+                    )
+                    break
+                except docker.errors.ImageNotFound as error:
+                    last_error = error
+                    container_logger.info(
+                        "Image '%s' not found; trying next candidate (if any)", candidate
+                    )
+                except Exception as error:  # pragma: no cover - unexpected docker error
+                    last_error = error
+                    container_logger.info(
+                        "Failed to create container for %s with image '%s': %s",
+                        instance_id,
+                        candidate,
+                        error,
+                    )
+
+            if resolved_image is None:
+                raise last_error or RuntimeError(
+                    f"Unable to resolve container image for {instance_id}"
+                )
+
             container.start()
 
             if commit is not None:
@@ -241,11 +360,21 @@ def run_validation(
 
     instance_payload = dict(instance)
     instance_id = instance_payload[KEY_INSTANCE_ID]
-    image_name = instance_payload[KEY_IMAGE_NAME]
+    raw_image = instance_payload.get("raw_image_name", instance_payload[KEY_IMAGE_NAME])
+    instance_payload["raw_image_name"] = raw_image
+
+    canonical_name = _canonical_image_key(raw_image)
+    instance_payload[KEY_IMAGE_NAME] = canonical_name
 
     registry_value = instance_payload.get("image_registry")
+    if not registry_value:
+        registry_value = _infer_registry_host(raw_image)
     if registry_value:
-        REGISTRY_CACHE[image_name] = str(registry_value).strip()
+        registry_value = str(registry_value).strip()
+        instance_payload["image_registry"] = registry_value
+        REGISTRY_CACHE[canonical_name] = registry_value
+    else:
+        instance_payload.pop("image_registry", None)
 
     valid_folder = LOG_DIR_RUN_VALIDATION / run_id
     instance_dir = valid_folder / instance_id
@@ -264,7 +393,7 @@ def run_validation(
 
     runner = _swesmith_utils.run_patch_in_container
 
-    val_postgold_path = valid_folder / f"{image_name}{REF_SUFFIX}" / LOG_TEST_OUTPUT
+    val_postgold_path = valid_folder / f"{canonical_name}{REF_SUFFIX}" / LOG_TEST_OUTPUT
 
     if run_min_pregold:
         ref_instance_id = f"{instance_id}{REF_SUFFIX}"
