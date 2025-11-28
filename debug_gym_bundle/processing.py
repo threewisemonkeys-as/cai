@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 JobSpec = tuple[str, str]
 
 _REGISTRY_PATCH_APPLIED = False
+_REGISTRY_CACHE: dict[str, str] = {}
 
 
 def _ensure_validation_registry_support() -> None:
@@ -90,7 +91,10 @@ def _ensure_validation_registry_support() -> None:
         client = docker.from_env()
         instance_id = instance[KEY_INSTANCE_ID]
         image_name = instance[KEY_IMAGE_NAME]
-        registry = (instance.get("image_registry") or "").strip()
+        registry_value = instance.get("image_registry")
+        if registry_value:
+            _REGISTRY_CACHE[instance[KEY_IMAGE_NAME]] = str(registry_value).strip()
+        registry = _REGISTRY_CACHE.get(instance[KEY_IMAGE_NAME], "")
         resolved_image = f"{registry.rstrip('/')}/{image_name}" if registry else image_name
         logger = None
 
