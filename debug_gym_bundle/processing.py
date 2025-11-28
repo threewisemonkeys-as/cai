@@ -122,8 +122,6 @@ def process_single_job(
     instance_id = create_instance_id(image_name=image_name, seed=seed)
 
     try:
-        logger.info("Starting job for %s", jid)
-
         logdir = Path(logdir)
         image_output_dir = logdir / image_name / f"seed_{seed}"
         image_output_dir.mkdir(exist_ok=True, parents=True)
@@ -137,6 +135,8 @@ def process_single_job(
             stderr_file = redirect_stack.enter_context(stderr_path.open("w", encoding="utf-8"))
             redirect_stack.enter_context(redirect_stdout(stdout_file))
             redirect_stack.enter_context(redirect_stderr(stderr_file))
+
+            logger.info("Starting job for %s", jid)
 
             repo_name, short_commit_sha = extract_repo_commit(image_name)
 
