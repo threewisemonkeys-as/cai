@@ -6,7 +6,6 @@ import copy
 import json
 import logging
 import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
@@ -34,180 +33,11 @@ from .utils import (
     LOG_REPORT,
     remove_added_test_files,
 )
+from .validation import REGISTRY_CACHE, ensure_validation_registry_support, run_validation
 
 logger = logging.getLogger(__name__)
 
 JobSpec = tuple[str, str]
-
-_REGISTRY_PATCH_APPLIED = False
-_REGISTRY_CACHE: dict[str, str] = {}
-
-
-def _ensure_validation_registry_support() -> None:
-    """Monkeypatch SWE-smith validation to honour optional image registries."""
-
-    global _REGISTRY_PATCH_APPLIED
-    if _REGISTRY_PATCH_APPLIED:
-        return
-
-    try:
-        from swesmith.harness import utils as swesmith_utils
-        from swesmith.harness import valid as swesmith_valid
-    except ImportError:  # pragma: no cover - defensive guard for lean installs
-        return
-
-    import docker
-    import traceback
-
-    from swebench.harness.constants import (
-        DOCKER_PATCH,
-        DOCKER_USER,
-        DOCKER_WORKDIR,
-        KEY_INSTANCE_ID,
-        LOG_INSTANCE,
-        LOG_TEST_OUTPUT,
-        RUN_EVALUATION_LOG_DIR,
-        TESTS_TIMEOUT,
-        UTF8,
-    )
-    from swebench.harness.docker_build import setup_logger
-    from swebench.harness.docker_utils import (
-        cleanup_container,
-        copy_to_container,
-        exec_run_with_timeout,
-    )
-    from swesmith.constants import ENV_NAME, TEST_OUTPUT_END, TEST_OUTPUT_START
-
-    def _run_patch_with_registry(
-        instance: dict,
-        run_id: str,
-        log_dir: Path,
-        patch: str | None = None,
-        commit: str | None = None,
-        is_gold: bool = False,
-        timeout: int = swesmith_utils.TIMEOUT,
-    ):
-        container = None
-        client = docker.from_env()
-        instance_id = instance[KEY_INSTANCE_ID]
-        image_name = instance[KEY_IMAGE_NAME]
-        registry_value = instance.get("image_registry")
-        if registry_value:
-            _REGISTRY_CACHE[instance[KEY_IMAGE_NAME]] = str(registry_value).strip()
-        registry = _REGISTRY_CACHE.get(instance[KEY_IMAGE_NAME], "")
-        resolved_image = f"{registry.rstrip('/')}/{image_name}" if registry else image_name
-        logger = None
-
-        try:
-            container_type = None
-            if log_dir == RUN_EVALUATION_LOG_DIR:
-                container_type = "eval"
-            elif log_dir == LOG_DIR_RUN_VALIDATION:
-                container_type = "val"
-
-            log_dir = log_dir / run_id / instance_id
-            log_dir.mkdir(parents=True, exist_ok=True)
-            container_name = f"swesmith.{container_type}.{run_id}.{instance_id}"
-            log_file = log_dir / LOG_INSTANCE
-            logger = setup_logger(container_name, log_file)
-
-            container = client.containers.create(
-                image=resolved_image,
-                name=container_name,
-                user=DOCKER_USER,
-                detach=True,
-                command="tail -f /dev/null",
-                platform="linux/x86_64",
-                mem_limit="10g",
-            )
-            container.start()
-
-            if commit is not None:
-                logger.info(f"Checking out commit {commit}")
-                container.exec_run(
-                    "git fetch", workdir=DOCKER_WORKDIR, user=DOCKER_USER
-                )
-                val = container.exec_run(
-                    f"git checkout {commit}",
-                    workdir=DOCKER_WORKDIR,
-                    user=DOCKER_USER,
-                )
-                if val.exit_code != 0:
-                    logger.info(f"CHECKOUT FAILED: {val.output.decode(UTF8)}")
-                    return logger, False
-
-            if patch is not None:
-                patch_file = log_dir / "patch.diff"
-                patch_file.write_text(patch)
-                logger.info(
-                    f"Patch written to {patch_file}, now applying to container..."
-                )
-                copy_to_container(container, patch_file, Path(DOCKER_PATCH))
-                swesmith_utils._apply_patch(instance_id, container, logger, is_gold)
-
-            eval_file = log_dir / "eval.sh"
-            test_command, _ = swesmith_utils.get_test_command(instance)
-            eval_file.write_text(
-                "\n".join(
-                    [
-                        "#!/bin/bash",
-                        "set -uxo pipefail",
-                        "source /opt/miniconda3/bin/activate",
-                        f"conda activate {ENV_NAME}",
-                        f"cd {DOCKER_WORKDIR}",
-                        f": '{TEST_OUTPUT_START}'",
-                        test_command,
-                        f": '{TEST_OUTPUT_END}'",
-                    ]
-                )
-                + "\n"
-            )
-            copy_to_container(container, eval_file, Path("/eval.sh"))
-
-            test_output, timed_out, total_runtime = exec_run_with_timeout(
-                container, "/bin/bash /eval.sh", timeout=timeout
-            )
-            test_output_path = log_dir / LOG_TEST_OUTPUT
-            logger.info(f"Test Runtime: {total_runtime:_.2f} seconds")
-            with open(test_output_path, "w") as handle:
-                handle.write(test_output)
-                if timed_out:
-                    timeout_error = f"{TESTS_TIMEOUT}: {timeout} seconds exceeded"
-                    handle.write(f"\n\n{timeout_error}")
-
-            logger.info(
-                f"Test output for {instance_id} written to {test_output_path}"
-            )
-            cleanup_container(client, container, logger)
-            return logger, timed_out
-        except Exception as exc:  # pragma: no cover - defensive parity with upstream
-            error_msg = f"Error validating {instance_id}: {exc}\n{traceback.format_exc()}"
-            if logger is not None:
-                logger.info(error_msg)
-                print(
-                    f"Error validating {instance_id}: {exc}. See {logger.log_file} for details."
-                )
-            else:  # pragma: no cover - defensive guard for early failures
-                print(error_msg)
-            if logger is not None:
-                cleanup_container(client, container, logger)
-            else:  # pragma: no cover - fallback when logger setup fails
-                if container is not None:
-                    try:
-                        container.stop(timeout=1)
-                    except Exception:
-                        pass
-                    try:
-                        container.remove(force=True)
-                    except Exception:
-                        pass
-                client.close()
-            return logger, False
-
-    swesmith_utils.run_patch_in_container = _run_patch_with_registry  # type: ignore[attr-defined]
-    swesmith_valid.run_patch_in_container = _run_patch_with_registry  # type: ignore[attr-defined]
-    _REGISTRY_PATCH_APPLIED = True
-
 
 def _build_terminal(
     image_name: str,
@@ -386,7 +216,7 @@ def process_single_job(
             if not registry_value:
                 registry_value = None
 
-        _ensure_validation_registry_support()
+        ensure_validation_registry_support()
 
         if not report_path.exists():
             instance_data = {
@@ -397,8 +227,7 @@ def process_single_job(
             }
             if registry_value is not None:
                 instance_data["image_registry"] = registry_value
-                _REGISTRY_CACHE.setdefault(image_name, registry_value)
-            from swesmith.harness.valid import run_validation
+                REGISTRY_CACHE.setdefault(image_name, registry_value)
 
             try:
                 run_kwargs = {
@@ -409,13 +238,6 @@ def process_single_job(
                 if validation_timeout is not None:
                     run_kwargs["timeout"] = validation_timeout
                 run_validation(**run_kwargs)
-            except subprocess.CalledProcessError as exc:
-                message = (
-                    "Validation command failed (check git/SSH access for SWE-smith"
-                    f" repos): {exc}"
-                )
-                logger.error(message)
-                return (None, False, f"non_retryable: {message}")
             except FileNotFoundError as exc:
                 message = (
                     "Validation artifacts missing after run (likely clone failure); "
