@@ -8,7 +8,7 @@ tools:
   - rewrite
   - bash
   - submit:
-      apply_eval: false
+      eval_on_submit: false
 
 agent:
   max_steps: 80
@@ -45,7 +45,7 @@ run:
   logdir: results/debug_gym_runs
   # run_id: debug-gym-local
   seed_per_image: 25
-  max_workers: 100
+  max_workers: 50
   max_tries: 5
   shuffle: true
   validation_timeout: 600   # 5‑minute per-instance validation window
