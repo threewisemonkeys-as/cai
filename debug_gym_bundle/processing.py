@@ -238,13 +238,6 @@ def process_single_job(
                 if validation_timeout is not None:
                     run_kwargs["timeout"] = validation_timeout
                 run_validation(**run_kwargs)
-            except FileNotFoundError as exc:
-                message = (
-                    "Validation artifacts missing after run (likely clone failure); "
-                    f"expected file not found: {exc}"
-                )
-                logger.error(message)
-                return (None, False, f"non_retryable: {message}")
             except Exception as exc:  # pragma: no cover - defensive guard
                 message = f"Validation routine raised unexpected error: {exc}"
                 logger.exception(message)

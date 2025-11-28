@@ -279,7 +279,14 @@ def run_validation(
         )
         if ref_result is None:
             logger.error("Pre-gold container run failed for %s", ref_instance_id)
-            _write_report(report_path, {"error": "Pre-gold container run failed"})
+            _write_report(
+                report_path,
+                {
+                    "error": "Pre-gold container run failed",
+                    "stage": "pregold",
+                    "instance": ref_instance_id,
+                },
+            )
             return
         pre_logger, pre_timed_out = ref_result
         try:
@@ -289,19 +296,28 @@ def run_validation(
                     report_path,
                     {KEY_TIMED_OUT: True, "timeout": timeout, "stage": "pregold"},
                 )
-                shutil.rmtree(valid_folder / ref_instance_id, ignore_errors=True)
                 return
 
             ref_dir = valid_folder / ref_instance_id
             ref_output = ref_dir / LOG_TEST_OUTPUT
             if not ref_output.exists():
-                shutil.rmtree(ref_dir, ignore_errors=True)
-                raise FileNotFoundError(ref_output)
+                logger.error(
+                    "Reference test output missing at %s for %s", ref_output, ref_instance_id
+                )
+                _write_report(
+                    report_path,
+                    {
+                        "error": "Reference test output not found",
+                        "stage": "pregold",
+                        "missing_path": str(ref_output),
+                        "instance": ref_instance_id,
+                    },
+                )
+                return
 
             val_postgold_path = instance_dir / LOG_TEST_OUTPUT_PRE_GOLD
             val_postgold_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ref_output, val_postgold_path)
-            shutil.rmtree(ref_dir, ignore_errors=True)
         finally:
             if pre_logger is not None:
                 close_logger(pre_logger)
@@ -315,19 +331,41 @@ def run_validation(
     )
     if patched_result is None:
         logger.error("Patched container run failed for %s", instance_id)
-        _write_report(report_path, {"error": "Patched container run failed"})
+        _write_report(
+            report_path,
+            {
+                "error": "Patched container run failed",
+                "instance": instance_id,
+                "stage": "postgold",
+            },
+        )
         return
 
     patched_logger, timed_out = patched_result
     try:
         if timed_out:
             logger.info("Patched run timed out for %s", instance_id)
-            _write_report(report_path, {KEY_TIMED_OUT: True, "timeout": timeout})
+            _write_report(
+                report_path,
+                {KEY_TIMED_OUT: True, "timeout": timeout, "stage": "postgold"},
+            )
             return
 
         val_pregold_path = instance_dir / LOG_TEST_OUTPUT
         if not val_pregold_path.exists():
-            raise FileNotFoundError(val_pregold_path)
+            logger.error(
+                "Patched test output missing at %s for %s", val_pregold_path, instance_id
+            )
+            _write_report(
+                report_path,
+                {
+                    "error": "Patched test output not found",
+                    "stage": "postgold",
+                    "missing_path": str(val_pregold_path),
+                    "instance": instance_id,
+                },
+            )
+            return
 
         report = get_valid_report(  # type: ignore[misc]
             val_pregold_path=val_pregold_path,

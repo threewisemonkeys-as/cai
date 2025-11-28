@@ -298,6 +298,14 @@ def assess_validation_report(
     f2p: list[str] = report.get(FAIL_TO_PASS, []) or []
     p2p: list[str] = report.get(PASS_TO_PASS, []) or []
 
+    if "error" in report:
+        error_details = report.get("error")
+        if isinstance(error_details, str):
+            message = error_details
+        else:
+            message = json.dumps(error_details)
+        return False, f2p, p2p, message
+
     if KEY_TIMED_OUT in report:
         return False, f2p, p2p, "Validation timed out"
     if not f2p:
