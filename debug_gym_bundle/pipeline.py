@@ -28,7 +28,17 @@ def regular(
     config: str | Path | None = None,
     run_id: str | None = None,
 ) -> dict[str, int]:
-    """Run the full Debug-Gym bug generation pipeline."""
+    """Run the full Debug-Gym bug generation pipeline.
+    Args:
+        config: Optional override path for the YAML configuration used to set
+            up the environment, agent, and runtime parameters. When omitted the
+            default bundled configuration is used.
+        run_id: Optional identifier to override the ID specified in the YAML
+            configuration. Useful for resuming or grouping multiple runs.
+    Returns:
+        A dictionary summarising the number of successful and failed jobs along
+        with the total jobs attempted.
+    """
 
     session_config, runtime_config = load_pipeline_config(config)
 
@@ -97,6 +107,7 @@ def regular(
         experiment_id=runtime_config.run_id,
         config_path=session_config.issue_gen_config,
     )
+    # Reuse a single issue generator so the SWE-bench dataset and LLM stay warm.
     logger.info("Issue generator initialized and ready")
 
     successful_processes = 0

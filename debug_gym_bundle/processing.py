@@ -121,12 +121,12 @@ def process_single_job(
     instance_id = create_instance_id(image_name=image_name, seed=seed)
 
     try:
+        logger.info("Starting job for %s", jid)
+
         logdir = Path(logdir)
         image_output_dir = logdir / image_name / f"seed_{seed}"
         image_output_dir.mkdir(exist_ok=True, parents=True)
         _cleanup_previous_outputs(image_output_dir)
-
-        logger.info("Starting job for %s", jid)
 
         repo_name, short_commit_sha = extract_repo_commit(image_name)
 
