@@ -20,7 +20,7 @@ from debug_gym.gym.tools.toolbox import Toolbox
 from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
-from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS
+from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS, KEY_IMAGE_NAME
 from swesmith.constants import LOG_DIR_RUN_VALIDATION
 
 from .config import DebugGymSessionConfig
@@ -38,6 +38,39 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 JobSpec = tuple[str, str]
+
+_REGISTRY_PATCH_APPLIED = False
+
+
+def _ensure_validation_registry_support() -> None:
+    """Monkeypatch SWE-smith validation to honour optional image registries."""
+
+    global _REGISTRY_PATCH_APPLIED
+    if _REGISTRY_PATCH_APPLIED:
+        return
+
+    try:
+        from swesmith.harness import utils as swesmith_utils
+        from swesmith.harness import valid as swesmith_valid
+    except ImportError:  # pragma: no cover - defensive guard for lean installs
+        return
+
+    original_run_patch = swesmith_utils.run_patch_in_container
+
+    def _run_patch_with_registry(instance: dict, *args, **kwargs):
+        registry = instance.get("image_registry")
+        if registry:
+            prefix = str(registry).strip()
+            if prefix:
+                instance = {
+                    **instance,
+                    KEY_IMAGE_NAME: prefix.rstrip("/") + "/" + instance[KEY_IMAGE_NAME],
+                }
+        return original_run_patch(instance, *args, **kwargs)
+
+    swesmith_utils.run_patch_in_container = _run_patch_with_registry  # type: ignore[attr-defined]
+    swesmith_valid.run_patch_in_container = _run_patch_with_registry  # type: ignore[attr-defined]
+    _REGISTRY_PATCH_APPLIED = True
 
 
 def _build_terminal(
@@ -209,6 +242,16 @@ def process_single_job(
         )
         report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
 
+        registry_value = session_config.env_terminal_kwargs.get("registry")
+        if (not registry_value) and isinstance(session_config.env_terminal, dict):
+            registry_value = session_config.env_terminal.get("registry")
+        if registry_value is not None:
+            registry_value = str(registry_value).strip()
+            if not registry_value:
+                registry_value = None
+
+        _ensure_validation_registry_support()
+
         if not report_path.exists():
             instance_data = {
                 "strategy": "debuggym",
@@ -216,6 +259,8 @@ def process_single_job(
                 "patch": patch_text,
                 "image_name": image_name,
             }
+            if registry_value is not None:
+                instance_data["image_registry"] = registry_value
             from swesmith.harness.valid import run_validation
 
             try:
@@ -281,6 +326,8 @@ def process_single_job(
             "agent_resolved": resolved,
             "agent_uuid": agent._uuid,
         }
+        if registry_value is not None:
+            instance_data["image_registry"] = registry_value
 
         logger.info("Successfully analysed validation report for %s", jid)
         logger.info("Generating problem description text for %s", jid)

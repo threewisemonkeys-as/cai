@@ -60,6 +60,11 @@ pipeline refactored into modular components. You can copy
 - Provide a different instruction file by updating `environment.instructions_file`.
 - Override the agent system prompt by editing `agent.system_prompt_file` or supplying
    an inline `agent.system_prompt` value.
+- Any additional keys under `environment` (for example `type`, `registry`,
+  Kubernetes `namespace`/`pod_spec_kwargs`, or Docker credentials) are forwarded to
+  the underlying `select_terminal` call. When `registry` is provided, the same value
+  is reused during SWE-smith validation so images are pulled from your private
+  registry instead of Docker Hub.
 
 > Note: The script requires the `fire` package for its CLI interface, plus all
 > Debug-Gym, SWE-bench, SWE-smith, and supporting dependencies used in the

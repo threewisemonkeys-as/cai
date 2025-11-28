@@ -119,7 +119,23 @@ def load_pipeline_config(
     if not isinstance(env_cfg, dict):
         raise ValueError("Configuration must include an 'environment' mapping.")
 
+    env_terminal_keys = {
+        "terminal",
+        "terminal_kwargs",
+        "workspace_dir",
+        "instructions",
+        "instructions_file",
+        "setup_commands",
+        "init_git",
+        "dir_tree_depth",
+    }
+    implicit_terminal_cfg = {
+        key: value for key, value in env_cfg.items() if key not in env_terminal_keys
+    }
+
     terminal_cfg = env_cfg.get("terminal")
+    if terminal_cfg is None and implicit_terminal_cfg:
+        terminal_cfg = implicit_terminal_cfg
     if terminal_cfg is None:
         terminal: str | dict[str, Any] | None = "docker"
     elif isinstance(terminal_cfg, str):
