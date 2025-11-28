@@ -20,8 +20,8 @@ from debug_gym.gym.tools.toolbox import Toolbox
 from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
-from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS, KEY_IMAGE_NAME
-from swesmith.constants import LOG_DIR_RUN_VALIDATION
+from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS
+from swesmith.constants import LOG_DIR_RUN_VALIDATION, KEY_IMAGE_NAME
 
 from .config import DebugGymSessionConfig
 from .issue_generation import CustomIssueGen, _generate_issue_payload
