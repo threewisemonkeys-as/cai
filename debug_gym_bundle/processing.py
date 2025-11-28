@@ -397,6 +397,7 @@ def process_single_job(
             }
             if registry_value is not None:
                 instance_data["image_registry"] = registry_value
+                _REGISTRY_CACHE.setdefault(image_name, registry_value)
             from swesmith.harness.valid import run_validation
 
             try:
