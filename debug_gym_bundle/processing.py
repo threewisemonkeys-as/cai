@@ -6,7 +6,6 @@ import copy
 import json
 import logging
 import shutil
-from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
@@ -127,181 +126,172 @@ def process_single_job(
         image_output_dir.mkdir(exist_ok=True, parents=True)
         _cleanup_previous_outputs(image_output_dir)
 
-        stdout_path = image_output_dir / "stdout.log"
-        stderr_path = image_output_dir / "stderr.log"
+        logger.info("Starting job for %s", jid)
 
-        with ExitStack() as redirect_stack:
-            stdout_file = redirect_stack.enter_context(stdout_path.open("w", encoding="utf-8"))
-            stderr_file = redirect_stack.enter_context(stderr_path.open("w", encoding="utf-8"))
-            redirect_stack.enter_context(redirect_stdout(stdout_file))
-            redirect_stack.enter_context(redirect_stderr(stderr_file))
+        repo_name, short_commit_sha = extract_repo_commit(image_name)
 
-            logger.info("Starting job for %s", jid)
+        debug_logger = DebugGymLogger(
+            f"buggen:{shorten(instance_id, width=40)}",
+            log_dir=str(image_output_dir / "debug_gym_logs"),
+        )
+        debug_logger.setLevel(logging.INFO)
 
-            repo_name, short_commit_sha = extract_repo_commit(image_name)
+        terminal = _build_terminal(
+            image_name=image_name,
+            workspace_dir=session_config.env_workspace_dir,
+            setup_commands=session_config.env_setup_commands,
+            terminal_setting=session_config.env_terminal,
+            overrides=session_config.env_terminal_kwargs,
+            logger=debug_logger,
+        )
 
-            debug_logger = DebugGymLogger(
-                f"buggen:{shorten(instance_id, width=40)}",
-                log_dir=str(image_output_dir / "debug_gym_logs"),
-            )
-            debug_logger.setLevel(logging.INFO)
+        env = FreeEnv(
+            image=image_name,
+            terminal=terminal,
+            mount_path=None,
+            setup_commands=list(session_config.env_setup_commands),
+            instructions=session_config.env_instructions,
+            init_git=session_config.env_init_git,
+            workspace_dir=session_config.env_workspace_dir,
+            logger=debug_logger,
+            dir_tree_depth=session_config.env_dir_tree_depth,
+        )
 
-            terminal = _build_terminal(
-                image_name=image_name,
-                workspace_dir=session_config.env_workspace_dir,
-                setup_commands=session_config.env_setup_commands,
-                terminal_setting=session_config.env_terminal,
-                overrides=session_config.env_terminal_kwargs,
-                logger=debug_logger,
-            )
+        _add_tools(env, session_config.tools, debug_logger)
 
-            env = FreeEnv(
-                image=image_name,
-                terminal=terminal,
-                mount_path=None,
-                setup_commands=list(session_config.env_setup_commands),
-                instructions=session_config.env_instructions,
-                init_git=session_config.env_init_git,
-                workspace_dir=session_config.env_workspace_dir,
-                logger=debug_logger,
-                dir_tree_depth=session_config.env_dir_tree_depth,
-            )
+        llm = LLM.instantiate(
+            llm_name=model_name,
+            logger=debug_logger,
+        )
+        if llm is None:
+            raise RuntimeError(f"Failed to instantiate LLM '{model_name}'")
 
-            _add_tools(env, session_config.tools, debug_logger)
+        agent_config = copy.deepcopy(session_config.agent_config)
+        agent_config["output_path"] = str(image_output_dir / "debug_gym_runs")
+        agent_config["random_seed"] = derive_agent_seed(seed)
 
-            llm = LLM.instantiate(
-                llm_name=model_name,
-                logger=debug_logger,
-            )
-            if llm is None:
-                raise RuntimeError(f"Failed to instantiate LLM '{model_name}'")
+        agent = FreeAgent(
+            config=agent_config,
+            env=env,
+            llm=llm,
+            logger=debug_logger,
+        )
 
-            agent_config = copy.deepcopy(session_config.agent_config)
-            agent_config["output_path"] = str(image_output_dir / "debug_gym_runs")
-            agent_config["random_seed"] = derive_agent_seed(seed)
+        resolved = agent.run(task_name=instance_id)
+        debug_logger.info("Agent run completed. Resolved=%s", resolved)
 
-            agent = FreeAgent(
-                config=agent_config,
-                env=env,
-                llm=llm,
-                logger=debug_logger,
-            )
+        agent.save_trajectory(task_name=instance_id)
+        agent.save_patch(task_name=instance_id)
 
-            resolved = agent.run(task_name=instance_id)
-            debug_logger.info("Agent run completed. Resolved=%s", resolved)
+        agent_output_dir = Path(agent_config["output_path"]) / agent._uuid
+        trajectory_src = agent_output_dir / instance_id / "trajectory.json"
+        patch_src = agent_output_dir / instance_id / "debug_gym.patch"
 
-            agent.save_trajectory(task_name=instance_id)
-            agent.save_patch(task_name=instance_id)
+        if trajectory_src.exists():
+            shutil.copy2(trajectory_src, image_output_dir / "trajectory.json")
 
-            agent_output_dir = Path(agent_config["output_path"]) / agent._uuid
-            trajectory_src = agent_output_dir / instance_id / "trajectory.json"
-            patch_src = agent_output_dir / instance_id / "debug_gym.patch"
+        if patch_src.exists():
+            shutil.copy2(patch_src, image_output_dir / "debug_gym.patch")
+            patch_text = patch_src.read_text()
+        else:
+            patch_text = env.patch
 
-            if trajectory_src.exists():
-                shutil.copy2(trajectory_src, image_output_dir / "trajectory.json")
+        if not patch_text or patch_text.strip() == "":
+            return None, False, "Debug-Gym agent produced empty patch"
 
-            if patch_src.exists():
-                shutil.copy2(patch_src, image_output_dir / "debug_gym.patch")
-                patch_text = patch_src.read_text()
-            else:
-                patch_text = env.patch
+        patch_text = remove_added_test_files(patch_text)
 
-            if not patch_text or patch_text.strip() == "":
-                return None, False, "Debug-Gym agent produced empty patch"
+        logger.info(
+            "Successfully generated patch for %s with seed %s. Validating generated bug.",
+            image_name,
+            seed,
+        )
+        report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
 
-            patch_text = remove_added_test_files(patch_text)
+        registry_value = session_config.env_terminal_kwargs.get("registry")
+        if (not registry_value) and isinstance(session_config.env_terminal, dict):
+            registry_value = session_config.env_terminal.get("registry")
+        if registry_value is not None:
+            registry_value = str(registry_value).strip()
+            if not registry_value:
+                registry_value = None
 
-            logger.info(
-                "Successfully generated patch for %s with seed %s. Validating generated bug.",
-                image_name,
-                seed,
-            )
-            report_path = LOG_DIR_RUN_VALIDATION / run_id / instance_id / LOG_REPORT
+        ensure_validation_registry_support()
 
-            registry_value = session_config.env_terminal_kwargs.get("registry")
-            if (not registry_value) and isinstance(session_config.env_terminal, dict):
-                registry_value = session_config.env_terminal.get("registry")
-            if registry_value is not None:
-                registry_value = str(registry_value).strip()
-                if not registry_value:
-                    registry_value = None
-
-            ensure_validation_registry_support()
-
-            if not report_path.exists():
-                instance_data = {
-                    "strategy": "debuggym",
-                    "instance_id": instance_id,
-                    "patch": patch_text,
-                    "image_name": image_name,
-                }
-                if registry_value is not None:
-                    instance_data["image_registry"] = registry_value
-
-                try:
-                    run_kwargs = {
-                        "instance": instance_data,
-                        "run_id": run_id,
-                        "run_min_pregold": True,
-                    }
-                    if validation_timeout is not None:
-                        run_kwargs["timeout"] = validation_timeout
-                    run_validation(**run_kwargs)
-                except Exception as exc:  # pragma: no cover - defensive guard
-                    message = f"Validation routine raised unexpected error: {exc}"
-                    logger.exception(message)
-                    return (None, False, f"non_retryable: {message}")
-
-            if not report_path.exists():
-                logger.info("Could not find validation run report for %s", jid)
-                return None, False, "Could not find validation run report"
-
-            logger.info("Found report after running validation check for %s", jid)
-            try:
-                with report_path.open("r", encoding="utf-8") as report_handle:
-                    report = json.load(report_handle)
-            except json.JSONDecodeError as exc:
-                message = (
-                    "Validation report is not valid JSON; treating as non-retryable: "
-                    f"{exc}"
-                )
-                logger.error(message)
-                return (None, False, f"non_retryable: {message}")
-            is_buggy, f2p, p2p, rejection_msg = assess_validation_report(
-                report,
-                max_fail_fraction=max_fail_fraction,
-            )
-            if not is_buggy:
-                message = rejection_msg or "Validation rejected"
-                logger.info("Rejected %s: %s", jid, message)
-                return None, False, message
-
+        if not report_path.exists():
             instance_data = {
+                "strategy": "debuggym",
                 "instance_id": instance_id,
-                "repo": f"swesmith/{repo_name}.{short_commit_sha}",
                 "patch": patch_text,
-                FAIL_TO_PASS: f2p,
-                PASS_TO_PASS: p2p,
-                "created_at": datetime.now().isoformat(),
                 "image_name": image_name,
-                "agent_resolved": resolved,
-                "agent_uuid": agent._uuid,
             }
             if registry_value is not None:
                 instance_data["image_registry"] = registry_value
 
-            logger.info("Successfully analysed validation report for %s", jid)
-            logger.info("Generating problem description text for %s", jid)
-
             try:
-                logger.info("Calling issue_generator.generate_issue for %s", jid)
-                instance_data = _generate_issue_payload(issue_generator, instance_data)
-                logger.info("Successfully generated issue for %s", jid)
-            except Exception as err:  # pragma: no cover - defensive logging
-                logger.exception("Error generating issue for %s: %s", jid, err)
-                return (None, False, f"Error generating issue: {err}")
+                run_kwargs = {
+                    "instance": instance_data,
+                    "run_id": run_id,
+                    "run_min_pregold": True,
+                }
+                if validation_timeout is not None:
+                    run_kwargs["timeout"] = validation_timeout
+                run_validation(**run_kwargs)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                message = f"Validation routine raised unexpected error: {exc}"
+                logger.exception(message)
+                return (None, False, f"non_retryable: {message}")
 
-            return (instance_data, True, None)
+        if not report_path.exists():
+            logger.info("Could not find validation run report for %s", jid)
+            return None, False, "Could not find validation run report"
+
+        logger.info("Found report after running validation check for %s", jid)
+        try:
+            with report_path.open("r", encoding="utf-8") as report_handle:
+                report = json.load(report_handle)
+        except json.JSONDecodeError as exc:
+            message = (
+                "Validation report is not valid JSON; treating as non-retryable: "
+                f"{exc}"
+            )
+            logger.error(message)
+            return (None, False, f"non_retryable: {message}")
+        is_buggy, f2p, p2p, rejection_msg = assess_validation_report(
+            report,
+            max_fail_fraction=max_fail_fraction,
+        )
+        if not is_buggy:
+            message = rejection_msg or "Validation rejected"
+            logger.info("Rejected %s: %s", jid, message)
+            return None, False, message
+
+        instance_data = {
+            "instance_id": instance_id,
+            "repo": f"swesmith/{repo_name}.{short_commit_sha}",
+            "patch": patch_text,
+            FAIL_TO_PASS: f2p,
+            PASS_TO_PASS: p2p,
+            "created_at": datetime.now().isoformat(),
+            "image_name": image_name,
+            "agent_resolved": resolved,
+            "agent_uuid": agent._uuid,
+        }
+        if registry_value is not None:
+            instance_data["image_registry"] = registry_value
+
+        logger.info("Successfully analysed validation report for %s", jid)
+        logger.info("Generating problem description text for %s", jid)
+
+        try:
+            logger.info("Calling issue_generator.generate_issue for %s", jid)
+            instance_data = _generate_issue_payload(issue_generator, instance_data)
+            logger.info("Successfully generated issue for %s", jid)
+        except Exception as err:  # pragma: no cover - defensive logging
+            logger.exception("Error generating issue for %s: %s", jid, err)
+            return (None, False, f"Error generating issue: {err}")
+
+        return (instance_data, True, None)
 
     except Exception as err:  # pragma: no cover - defensive logging
         error_msg = f"Error processing {jid}: {err}"
