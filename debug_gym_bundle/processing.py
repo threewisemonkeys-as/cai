@@ -90,8 +90,8 @@ def _add_tools(
         if not tool_name:
             raise ValueError("Tool names cannot be empty")
 
-        if tool_name == "submit" and "apply_eval" not in tool_kwargs:
-            tool_kwargs = {**tool_kwargs, "apply_eval": False}
+        if tool_name == "submit" and "eval_on_submit" not in tool_kwargs:
+            tool_kwargs = {**tool_kwargs, "eval_on_submit": False}
 
         try:
             env.add_tool(Toolbox.get_tool(tool_name, **tool_kwargs))
