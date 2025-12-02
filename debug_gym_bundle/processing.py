@@ -134,7 +134,7 @@ def process_single_job(
             f"buggen:{shorten(instance_id, width=40)}",
             log_dir=str(image_output_dir / "debug_gym_logs"),
         )
-        debug_logger.setLevel(logging.INFO)
+        debug_logger.setLevel(logging.DEBUG)
 
         terminal = _build_terminal(
             image_name=image_name,

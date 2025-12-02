@@ -54,7 +54,7 @@ def configure_pipeline_logging(log_path: Path) -> DebugGymLogger:
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
         pipeline_logger = DebugGymLogger("buggen.pipeline")
-        pipeline_logger.setLevel(logging.INFO)
+        pipeline_logger.setLevel(logging.DEBUG)
         pipeline_logger.set_no_live()
 
         for handler in list(pipeline_logger.handlers):
@@ -64,13 +64,14 @@ def configure_pipeline_logging(log_path: Path) -> DebugGymLogger:
                 pipeline_logger.removeHandler(handler)
 
         file_handler = logging.FileHandler(resolved_path, mode="a", encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
         )
         pipeline_logger.addHandler(file_handler)
 
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
+        root_logger.setLevel(logging.DEBUG)
         for handler in list(root_logger.handlers):
             root_logger.removeHandler(handler)
         root_logger.addHandler(file_handler)
