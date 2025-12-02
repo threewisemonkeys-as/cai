@@ -48,5 +48,5 @@ run:
   max_workers: 50
   max_tries: 5
   shuffle: true
-  validation_timeout: 600   # 5‑minute per-instance validation window
+  validation_timeout: 600   # 10‑minute per-instance validation window
   max_fail_fraction: 0.2   # allow up to 20% of tests to regress
