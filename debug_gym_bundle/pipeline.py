@@ -19,6 +19,7 @@ from .utils import (
     _load_existing_results,
     _record_success,
     create_instance_id,
+    configure_pipeline_logging,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,13 @@ def regular(
 
     if run_id:
         runtime_config = replace(runtime_config, run_id=run_id)
+
+    log_file = (
+        runtime_config.output_file.parent
+        / f"{runtime_config.output_file.stem}.{runtime_config.run_id}.log"
+    )
+    pipeline_logger = configure_pipeline_logging(log_file)
+    pipeline_logger.info("Writing pipeline logs to %s", log_file)
 
     model_name = (session_config.llm_name or "").strip()
     if not model_name:

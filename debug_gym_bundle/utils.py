@@ -15,6 +15,7 @@ from unidiff import PatchSet
 
 from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS, LOG_REPORT as SWE_LOG_REPORT
 from swesmith.constants import KEY_TIMED_OUT
+from debug_gym.logger import DebugGymLogger  # type: ignore[import-not-found]
 
 try:  # Prefer SWESmith's constant when available for backward compatibility
     from swesmith.constants import LOG_REPORT as SWESMITH_LOG_REPORT  # type: ignore[attr-defined]
@@ -24,6 +25,59 @@ except ImportError:  # pragma: no cover - SWESmith versions without LOG_REPORT
 LOG_REPORT = SWESMITH_LOG_REPORT or SWE_LOG_REPORT
 
 logger = logging.getLogger(__name__)
+
+_LOGGING_LOCK = threading.Lock()
+_CONFIGURED_LOG_PATH: Path | None = None
+_PIPELINE_LOGGER: DebugGymLogger | None = None
+
+
+def configure_pipeline_logging(log_path: Path) -> DebugGymLogger:
+    """Route pipeline logs through a shared Debug-Gym logger writing to ``log_path``."""
+
+    try:  # pragma: no cover - rich is an optional runtime dependency
+        from rich.logging import RichHandler  # type: ignore
+    except ImportError:  # pragma: no cover - fallback when rich is unavailable
+        RichHandler = None  # type: ignore[assignment]
+
+    global _CONFIGURED_LOG_PATH, _PIPELINE_LOGGER
+
+    resolved_path = log_path.resolve()
+    with _LOGGING_LOCK:
+        if _CONFIGURED_LOG_PATH == resolved_path and _PIPELINE_LOGGER is not None:
+            return _PIPELINE_LOGGER
+
+        if _PIPELINE_LOGGER is not None:
+            _PIPELINE_LOGGER.close()
+            _PIPELINE_LOGGER = None
+            _CONFIGURED_LOG_PATH = None
+
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+        pipeline_logger = DebugGymLogger("buggen.pipeline")
+        pipeline_logger.setLevel(logging.INFO)
+        pipeline_logger.set_no_live()
+
+        for handler in list(pipeline_logger.handlers):
+            if RichHandler is not None and isinstance(handler, RichHandler):
+                pipeline_logger.removeHandler(handler)
+            elif handler.__class__.__module__.startswith("rich"):
+                pipeline_logger.removeHandler(handler)
+
+        file_handler = logging.FileHandler(resolved_path, mode="a", encoding="utf-8")
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+        pipeline_logger.addHandler(file_handler)
+
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        root_logger.addHandler(file_handler)
+
+        _PIPELINE_LOGGER = pipeline_logger
+        _CONFIGURED_LOG_PATH = resolved_path
+        return pipeline_logger
 
 if TYPE_CHECKING:
     from .config import BuggenRuntimeConfig
