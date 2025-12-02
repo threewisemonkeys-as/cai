@@ -36,7 +36,6 @@ environment:
         operator: Equal
         value: "true"
         effect: NoSchedule
-    imagePullProgressDeadlineSeconds: 600
   workspace_dir: /testbed
   instructions_file: free_env_buggen_instructions.md
 
