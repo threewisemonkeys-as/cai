@@ -202,13 +202,15 @@ def load_pipeline_config(
         raise ValueError("Configuration must include an 'agent' mapping.")
     agent_cfg = dict(agent_cfg_raw)
 
-    for numeric_key in ("max_steps", "max_rewrite_steps"):
-        if numeric_key not in agent_cfg:
-            raise KeyError(f"Agent configuration missing required key '{numeric_key}'.")
-        agent_cfg[numeric_key] = int(agent_cfg[numeric_key])
+    # max_steps is required, other numeric fields are optional
+    if "max_steps" not in agent_cfg:
+        raise KeyError("Agent configuration missing required key 'max_steps'.")
+    agent_cfg["max_steps"] = int(agent_cfg["max_steps"])
 
-    memory_size_raw = agent_cfg.get("memory_size", agent_cfg["max_steps"])
-    agent_cfg["memory_size"] = int(memory_size_raw)
+    # Convert optional numeric fields if present
+    for numeric_key in ("max_rewrite_steps", "max_history_token_cutoff", "max_history_steps_cutoff"):
+        if numeric_key in agent_cfg:
+            agent_cfg[numeric_key] = int(agent_cfg[numeric_key])
 
     system_prompt = agent_cfg.get("system_prompt")
     system_prompt_file = agent_cfg.get("system_prompt_file")

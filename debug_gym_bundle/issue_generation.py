@@ -84,7 +84,7 @@ class CustomIssueGen:
         with self._llm_lock:
             if self._llm is None:
                 self._llm = LLM.instantiate(
-                    llm_name=self.model,
+                    config={"name": self.model},
                     logger=self.logger,
                 )
             return self._llm

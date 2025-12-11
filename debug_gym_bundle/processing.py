@@ -11,7 +11,8 @@ from pathlib import Path
 from textwrap import shorten
 from typing import Any, Iterable
 
-from debug_gym.agents.free_agent import FreeAgent
+from debug_gym.agents import FroggyAgent
+from debug_gym.agents.utils import save_patch, save_trajectory
 from debug_gym.gym.envs.free_env import FreeEnv
 from debug_gym.gym.terminals import select_terminal
 from debug_gym.gym.terminals.terminal import Terminal
@@ -148,44 +149,45 @@ def process_single_job(
         env = FreeEnv(
             image=image_name,
             terminal=terminal,
-            mount_path=None,
             setup_commands=list(session_config.env_setup_commands),
-            instructions=session_config.env_instructions,
-            init_git=session_config.env_init_git,
             workspace_dir=session_config.env_workspace_dir,
             logger=debug_logger,
-            dir_tree_depth=session_config.env_dir_tree_depth,
         )
 
         _add_tools(env, session_config.tools, debug_logger)
 
         llm = LLM.instantiate(
-            llm_name=model_name,
+            config={"name": model_name},
             logger=debug_logger,
         )
         if llm is None:
             raise RuntimeError(f"Failed to instantiate LLM '{model_name}'")
 
         agent_config = copy.deepcopy(session_config.agent_config)
-        agent_config["output_path"] = str(image_output_dir / "debug_gym_runs")
         agent_config["random_seed"] = derive_agent_seed(seed)
 
-        agent = FreeAgent(
-            config=agent_config,
-            env=env,
-            llm=llm,
+        # Add custom system prompt with instructions if provided
+        if session_config.env_instructions:
+            agent_config.setdefault("system_prompt", session_config.env_instructions)
+
+        agent = FroggyAgent(
+            agent_args=agent_config,
             logger=debug_logger,
         )
 
-        resolved = agent.run(task_name=instance_id)
+        # Run the agent - returns trajectory dict, resolved status is on env
+        trajectory = agent.run(env, llm)
+        resolved = env.resolved
         debug_logger.info("Agent run completed. Resolved=%s", resolved)
 
-        agent.save_trajectory(task_name=instance_id)
-        agent.save_patch(task_name=instance_id)
+        # Save trajectory and patch using utility functions
+        problem_path = image_output_dir / "debug_gym_runs" / agent.args.uuid / instance_id
+        problem_path.mkdir(parents=True, exist_ok=True)
+        save_trajectory(agent, problem_path, debug_logger)
+        save_patch(env, problem_path, debug_logger)
 
-        agent_output_dir = Path(agent_config["output_path"]) / agent._uuid
-        trajectory_src = agent_output_dir / instance_id / "trajectory.json"
-        patch_src = agent_output_dir / instance_id / "debug_gym.patch"
+        trajectory_src = problem_path / "trajectory.json"
+        patch_src = problem_path / "debug_gym.patch"
 
         if trajectory_src.exists():
             shutil.copy2(trajectory_src, image_output_dir / "trajectory.json")
@@ -275,7 +277,7 @@ def process_single_job(
             "created_at": datetime.now().isoformat(),
             "image_name": image_name,
             "agent_resolved": resolved,
-            "agent_uuid": agent._uuid,
+            "agent_uuid": agent.args.uuid,
         }
         if registry_value is not None:
             instance_data["image_registry"] = registry_value
