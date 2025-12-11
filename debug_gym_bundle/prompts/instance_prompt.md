@@ -24,7 +24,7 @@ Follow these steps to resolve the issue:
 3. Implement your solution:
     - Make targeted changes to the necessary files following idiomatic code patterns once you determine the root cause.
     - You should be thorough and methodical.
-    - The `rewrite` tool requires line numbers, if you are unsure about the line numbers, use the `view` tool to view a file with line numbers.
+    - The `edit` tool requires line numbers, if you are unsure about the line numbers, use the `view` tool to view a file with line numbers.
     - If you need to create new file, use the `bash` tool. 
 
 4. Verify your solution:

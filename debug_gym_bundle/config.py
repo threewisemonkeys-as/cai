@@ -18,18 +18,15 @@ DEFAULT_CONFIG_PATH = CUR_DIR / "debug_gym_buggen.yaml"
 
 @dataclass(frozen=True)
 class DebugGymSessionConfig:
-    """Runtime configuration for FreeEnv, FreeAgent, and supporting tools."""
+    """Runtime configuration for FreeEnv, FroggyAgent, and supporting tools."""
 
     llm_name: str | None
     tools: tuple[str | dict[str, Any], ...]
     env_terminal: str | dict[str, Any] | None
     env_workspace_dir: str
-    env_instructions: str
     env_setup_commands: tuple[str, ...]
     env_terminal_kwargs: dict[str, Any]
-    env_dir_tree_depth: int
-    env_init_git: bool
-    agent_config: dict[str, Any]
+    agent_config: dict[str, Any]  # Contains system_prompt and instance_prompt
     issue_gen_config: Path
 
 
@@ -123,11 +120,7 @@ def load_pipeline_config(
         "terminal",
         "terminal_kwargs",
         "workspace_dir",
-        "instructions",
-        "instructions_file",
         "setup_commands",
-        "init_git",
-        "dir_tree_depth",
     }
     implicit_terminal_cfg = {
         key: value for key, value in env_cfg.items() if key not in env_terminal_keys
@@ -153,24 +146,6 @@ def load_pipeline_config(
     else:
         workspace_dir = str(workspace_cfg).strip() or "/testbed"
 
-    instructions = env_cfg.get("instructions")
-    instructions_file = env_cfg.get("instructions_file")
-    if instructions and instructions_file:
-        raise ValueError(
-            "Specify either environment.instructions or environment.instructions_file, not both."
-        )
-    if instructions_file:
-        resolved_instructions_path = _resolve_path(cfg_path, instructions_file)
-        if resolved_instructions_path is None or not Path(resolved_instructions_path).exists():
-            raise FileNotFoundError(
-                f"Instructions file not found: {resolved_instructions_path}"
-            )
-        instructions = Path(resolved_instructions_path).read_text()
-    if not instructions:
-        raise ValueError(
-            "Environment configuration must provide either inline 'instructions' or a valid 'instructions_file'."
-        )
-
     setup_commands = env_cfg.get("setup_commands")
     if setup_commands is None:
         setup_commands_tuple: tuple[str, ...] = ()
@@ -185,18 +160,6 @@ def load_pipeline_config(
     if not isinstance(terminal_kwargs, dict):
         raise ValueError("environment.terminal_kwargs must be a mapping")
 
-    dir_tree_depth = env_cfg.get("dir_tree_depth", 1)
-    try:
-        dir_tree_depth = int(dir_tree_depth)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("environment.dir_tree_depth must be an integer") from exc
-
-    init_git_raw = env_cfg.get("init_git", True)
-    if isinstance(init_git_raw, str):
-        init_git = init_git_raw.strip().lower() in {"1", "true", "yes", "on"}
-    else:
-        init_git = bool(init_git_raw)
-
     agent_cfg_raw = config_data.get("agent")
     if not isinstance(agent_cfg_raw, dict):
         raise ValueError("Configuration must include an 'agent' mapping.")
@@ -208,7 +171,7 @@ def load_pipeline_config(
     agent_cfg["max_steps"] = int(agent_cfg["max_steps"])
 
     # Convert optional numeric fields if present
-    for numeric_key in ("max_rewrite_steps", "max_history_token_cutoff", "max_history_steps_cutoff"):
+    for numeric_key in ("max_history_token_cutoff", "max_history_steps_cutoff"):
         if numeric_key in agent_cfg:
             agent_cfg[numeric_key] = int(agent_cfg[numeric_key])
 
@@ -234,6 +197,30 @@ def load_pipeline_config(
             agent_cfg.pop("system_prompt", None)
 
     agent_cfg.pop("system_prompt_file", None)
+
+    # Handle instance_prompt / instance_prompt_file
+    instance_prompt = agent_cfg.get("instance_prompt")
+    instance_prompt_file = agent_cfg.get("instance_prompt_file")
+    if instance_prompt and instance_prompt_file:
+        raise ValueError(
+            "Agent configuration must not specify both 'instance_prompt' and 'instance_prompt_file'."
+        )
+
+    if instance_prompt_file:
+        resolved_instance_path = _resolve_path(cfg_path, instance_prompt_file)
+        if resolved_instance_path is None or not Path(resolved_instance_path).exists():
+            raise FileNotFoundError(
+                f"Agent instance prompt file not found: {resolved_instance_path}"
+            )
+        agent_cfg["instance_prompt"] = Path(resolved_instance_path).read_text()
+    elif instance_prompt is not None:
+        text_value = str(instance_prompt)
+        if text_value.strip():
+            agent_cfg["instance_prompt"] = text_value
+        else:
+            agent_cfg.pop("instance_prompt", None)
+
+    agent_cfg.pop("instance_prompt_file", None)
 
     issue_gen_config_value = config_data.get("issue_gen_config")
     if not issue_gen_config_value:
@@ -311,11 +298,8 @@ def load_pipeline_config(
         tools=tools,
         env_terminal=terminal,
         env_workspace_dir=workspace_dir,
-        env_instructions=instructions,
         env_setup_commands=setup_commands_tuple,
         env_terminal_kwargs=dict(terminal_kwargs),
-        env_dir_tree_depth=dir_tree_depth,
-        env_init_git=init_git,
         agent_config=agent_cfg,
         issue_gen_config=issue_gen_config_resolved,
     )

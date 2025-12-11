@@ -1,19 +1,19 @@
 llm: 4o-az
-issue_gen_config: sans_patch_issue_gen.yaml
+issue_gen_config: prompts/issue_gen.yaml
 
 # Tool names resolved via debug_gym.gym.tools.toolbox.Toolbox
 tools:
   - listdir
   - view
-  - rewrite
+  - edit
   - bash
   - submit:
       eval_on_submit: false
 
 agent:
   max_steps: 80
-  max_rewrite_steps: 40
-  system_prompt_file: free_agent_system_prompt.md
+  system_prompt_file: prompts/system_prompt.md
+  instance_prompt_file: prompts/instance_prompt.md
 
 environment:
   # terminal: docker
@@ -37,7 +37,6 @@ environment:
         value: "true"
         effect: NoSchedule
   workspace_dir: /testbed
-  instructions_file: free_env_buggen_instructions.md
 
 run:
   images: swesmith/image_names.txt

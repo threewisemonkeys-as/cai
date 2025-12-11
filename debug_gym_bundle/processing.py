@@ -21,7 +21,7 @@ from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
 from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS
-from swesmith.constants import LOG_DIR_RUN_VALIDATION, KEY_IMAGE_NAME
+from swesmith.constants import LOG_DIR_RUN_VALIDATION
 
 from .config import DebugGymSessionConfig
 from .issue_generation import CustomIssueGen, _generate_issue_payload
@@ -146,6 +146,9 @@ def process_single_job(
             logger=debug_logger,
         )
 
+        # Note: setup_commands are passed to FreeEnv which executes them during setup_terminal().
+        # The terminal config may also use them depending on terminal type, but this is typically
+        # for terminal-level setup (e.g., k8s pod creation), while FreeEnv uses them for workspace setup.
         env = FreeEnv(
             image=image_name,
             terminal=terminal,
@@ -166,17 +169,13 @@ def process_single_job(
         agent_config = copy.deepcopy(session_config.agent_config)
         agent_config["random_seed"] = derive_agent_seed(seed)
 
-        # Add custom system prompt with instructions if provided
-        if session_config.env_instructions:
-            agent_config.setdefault("system_prompt", session_config.env_instructions)
-
         agent = FroggyAgent(
             agent_args=agent_config,
             logger=debug_logger,
         )
 
-        # Run the agent - returns trajectory dict, resolved status is on env
-        trajectory = agent.run(env, llm)
+        # Run the agent - resolved status is on env after run completes
+        agent.run(env, llm)
         resolved = env.resolved
         debug_logger.info("Agent run completed. Resolved=%s", resolved)
 
