@@ -1,4 +1,4 @@
-"""Issue generation helpers built on top of Debug-Gym's LLM stack."""
+"""Issue generation helpers built on top of debug_gym's LLM stack."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class CustomIssueGen:
-    """Minimal issue generator that relies on Debug-Gym's LLM stack."""
+    """Minimal issue generator that relies on debug_gym's LLM stack."""
 
     def __init__(
         self,
@@ -293,12 +293,3 @@ class CustomIssueGen:
                 json.dump(instance, handle, indent=2)
 
         return dict(instance)
-
-
-def _generate_issue_payload(
-    issue_generator: CustomIssueGen,
-    instance_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Run the issue generator and return its JSON payload."""
-
-    return issue_generator.generate_issue(instance_data)

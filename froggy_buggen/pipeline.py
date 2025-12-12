@@ -1,4 +1,4 @@
-"""High-level orchestration logic for Debug-Gym bug generation runs."""
+"""High-level orchestration logic for Froggy bug generation runs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
-from .config import BuggenRuntimeConfig, DebugGymSessionConfig, load_pipeline_config
+from .config import BuggenRuntimeConfig, FroggySessionConfig, load_pipeline_config
 from .issue_generation import CustomIssueGen
 from .processing import JobSpec, process_single_job
 from .utils import (
@@ -29,7 +29,7 @@ def regular(
     config: str | Path | None = None,
     run_id: str | None = None,
 ) -> dict[str, int]:
-    """Run the full Debug-Gym bug generation pipeline.
+    """Run the full Froggy bug generation pipeline.
     Args:
         config: Optional override path for the YAML configuration used to set
             up the environment, agent, and runtime parameters. When omitted the
@@ -101,7 +101,7 @@ def regular(
     jobs_specs = filtered_jobs
 
     logger.info(
-        "Processing %d jobs with %d workers, max %d tries per job using Debug-Gym pipeline.",
+        "Processing %d jobs with %d workers, max %d tries per job using Froggy pipeline.",
         len(jobs_specs),
         runtime_config.max_workers,
         runtime_config.max_tries,

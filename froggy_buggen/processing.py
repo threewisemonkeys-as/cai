@@ -1,4 +1,4 @@
-"""Per-job execution flow for Debug-Gym bug generation runs."""
+"""Per-job execution flow for Froggy bug generation runs."""
 
 from __future__ import annotations
 
@@ -9,22 +9,22 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from textwrap import shorten
-from typing import Any, Iterable
+from typing import Any
 
 from debug_gym.agents import FroggyAgent
 from debug_gym.agents.utils import save_patch, save_trajectory
+from debug_gym.experiment import add_tools
 from debug_gym.gym.envs.free_env import FreeEnv
 from debug_gym.gym.terminals import select_terminal
 from debug_gym.gym.terminals.terminal import Terminal
-from debug_gym.gym.tools.toolbox import Toolbox
 from debug_gym.llms.base import LLM
 from debug_gym.logger import DebugGymLogger
 
 from swebench.harness.constants import FAIL_TO_PASS, PASS_TO_PASS
 from swesmith.constants import LOG_DIR_RUN_VALIDATION
 
-from .config import DebugGymSessionConfig
-from .issue_generation import CustomIssueGen, _generate_issue_payload
+from .config import FroggySessionConfig
+from .issue_generation import CustomIssueGen
 from .utils import (
     _cleanup_previous_outputs,
     assess_validation_report,
@@ -43,11 +43,15 @@ JobSpec = tuple[str, str]
 def _build_terminal(
     image_name: str,
     workspace_dir: str,
-    setup_commands: tuple[str, ...],
     terminal_setting: Terminal | str | dict[str, Any] | None,
     overrides: dict[str, Any],
     logger: DebugGymLogger,
 ) -> Terminal | None:
+    """Build a terminal instance from configuration.
+
+    Note: setup_commands should NOT be passed here since FreeEnv handles them
+    in setup_terminal(). Passing them to both would cause duplicate execution.
+    """
     if isinstance(terminal_setting, Terminal):
         return terminal_setting
 
@@ -64,43 +68,7 @@ def _build_terminal(
     terminal_config.setdefault("base_image", image_name)
     terminal_config.setdefault("working_dir", workspace_dir)
 
-    if setup_commands:
-        terminal_config.setdefault("setup_commands", list(setup_commands))
-
     return select_terminal(terminal_config, logger=logger)
-
-
-def _add_tools(
-    env: FreeEnv,
-    tool_specs: Iterable[str | dict[str, Any]],
-    logger: DebugGymLogger,
-) -> None:
-    for spec in tool_specs:
-        tool_kwargs: dict[str, Any] = {}
-        if isinstance(spec, dict):
-            if len(spec) != 1:
-                raise ValueError("Tool configuration entries must contain exactly one tool name")
-            name, options = next(iter(spec.items()))
-            tool_name = str(name).strip()
-            if not tool_name:
-                raise ValueError("Tool name in mapping cannot be empty")
-            tool_kwargs = dict(options or {})
-        else:
-            tool_name = str(spec).strip()
-
-        if not tool_name:
-            raise ValueError("Tool names cannot be empty")
-
-        if tool_name == "submit" and "eval_on_submit" not in tool_kwargs:
-            tool_kwargs = {**tool_kwargs, "eval_on_submit": False}
-
-        try:
-            env.add_tool(Toolbox.get_tool(tool_name, **tool_kwargs))
-        except ValueError as exc:  # pragma: no cover - validation guard
-            raise RuntimeError(
-                f"Failed to load tool '{tool_name}': {exc}"
-            ) from exc
-        logger.debug("Added tool %s with options %s", tool_name, tool_kwargs)
 
 
 def process_single_job(
@@ -109,7 +77,7 @@ def process_single_job(
     model_name: str,
     run_id: str,
     issue_generator: CustomIssueGen,
-    session_config: DebugGymSessionConfig,
+    session_config: FroggySessionConfig,
     validation_timeout: int | None,
     max_fail_fraction: float,
 ) -> tuple[dict[str, Any] | None, bool, str | None]:
@@ -140,24 +108,28 @@ def process_single_job(
         terminal = _build_terminal(
             image_name=image_name,
             workspace_dir=session_config.env_workspace_dir,
-            setup_commands=session_config.env_setup_commands,
             terminal_setting=session_config.env_terminal,
             overrides=session_config.env_terminal_kwargs,
             logger=debug_logger,
         )
 
-        # Note: setup_commands are passed to FreeEnv which executes them during setup_terminal().
-        # The terminal config may also use them depending on terminal type, but this is typically
-        # for terminal-level setup (e.g., k8s pod creation), while FreeEnv uses them for workspace setup.
-        env = FreeEnv(
-            image=image_name,
-            terminal=terminal,
-            setup_commands=list(session_config.env_setup_commands),
-            workspace_dir=session_config.env_workspace_dir,
-            logger=debug_logger,
-        )
+        # setup_commands are passed only to FreeEnv which executes them in setup_terminal().
+        # They should NOT be passed to the terminal to avoid duplicate execution.
+        # Only pass setup_commands if explicitly configured; otherwise let FreeEnv use its default
+        # (which installs git).
+        env_kwargs: dict[str, Any] = {
+            "image": image_name,
+            "terminal": terminal,
+            "workspace_dir": session_config.env_workspace_dir,
+            "logger": debug_logger,
+        }
+        if session_config.env_setup_commands:
+            env_kwargs["setup_commands"] = list(session_config.env_setup_commands)
 
-        _add_tools(env, session_config.tools, debug_logger)
+        env = FreeEnv(**env_kwargs)
+
+        # Use debug_gym's add_tools with config dict format
+        add_tools(env, {"tools": list(session_config.tools)}, debug_logger)
 
         llm = LLM.instantiate(
             config={"name": model_name},
@@ -169,10 +141,7 @@ def process_single_job(
         agent_config = copy.deepcopy(session_config.agent_config)
         agent_config["random_seed"] = derive_agent_seed(seed)
 
-        agent = FroggyAgent(
-            agent_args=agent_config,
-            logger=debug_logger,
-        )
+        agent = FroggyAgent(agent_args=agent_config, logger=debug_logger)
 
         # Run the agent - resolved status is on env after run completes
         agent.run(env, llm)
@@ -198,7 +167,7 @@ def process_single_job(
             patch_text = env.patch
 
         if not patch_text or patch_text.strip() == "":
-            return None, False, "Debug-Gym agent produced empty patch"
+            return None, False, "Agent produced empty patch"
 
         patch_text = remove_added_test_files(patch_text)
 
@@ -286,7 +255,7 @@ def process_single_job(
 
         try:
             logger.info("Calling issue_generator.generate_issue for %s", jid)
-            instance_data = _generate_issue_payload(issue_generator, instance_data)
+            instance_data = issue_generator.generate_issue(instance_data)
             logger.info("Successfully generated issue for %s", jid)
         except Exception as err:  # pragma: no cover - defensive logging
             logger.exception("Error generating issue for %s: %s", jid, err)

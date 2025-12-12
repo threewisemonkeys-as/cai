@@ -1,27 +1,25 @@
-#!/usr/bin/env python3
-"""Generate issue descriptions for existing Debug-Gym validation logs."""
+"""Generate issue descriptions for existing validation logs.
+
+Usage:
+    python -m froggy_buggen.generate_issues_from_logs [--config CONFIG] [--run-id RUN_ID]
+"""
 
 from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
-if __package__ in {None, ""}:  # Running as a script; ensure package root is importable
-    package_root = Path(__file__).resolve().parent.parent
-    if str(package_root) not in sys.path:
-        sys.path.insert(0, str(package_root))
+from swebench.harness.constants import KEY_INSTANCE_ID
+from swesmith.constants import LOG_DIR_RUN_VALIDATION
 
-from debug_gym_bundle.config import load_pipeline_config
-from debug_gym_bundle.issue_generation import CustomIssueGen
-from debug_gym_bundle.utils import (
+from .config import load_pipeline_config
+from .issue_generation import CustomIssueGen
+from .utils import (
     _build_instance_from_logs,
     _load_existing_results,
     _persist_results,
 )
-from swebench.harness.constants import KEY_INSTANCE_ID
-from swesmith.constants import LOG_DIR_RUN_VALIDATION
 
 
 def _list_instance_dirs(run_dir: Path) -> list[Path]:

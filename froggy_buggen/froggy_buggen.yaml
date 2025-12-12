@@ -3,7 +3,6 @@ issue_gen_config: prompts/issue_gen.yaml
 
 # Tool names resolved via debug_gym.gym.tools.toolbox.Toolbox
 tools:
-  - listdir
   - view
   - edit
   - bash
@@ -40,9 +39,9 @@ environment:
 
 run:
   images: swesmith/image_names.txt
-  output_file: results/debug_gym_buggen_results.json
-  logdir: results/debug_gym_runs
-  # run_id: debug-gym-local
+  output_file: results/froggy_buggen_results.json
+  logdir: results/froggy_runs
+  # run_id: froggy-local
   seed_per_image: 25
   max_workers: 50
   max_tries: 5

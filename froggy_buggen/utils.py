@@ -1,4 +1,4 @@
-"""Shared helpers for Debug-Gym bug generation pipeline components."""
+"""Shared helpers for Froggy bug generation pipeline components."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ _PIPELINE_LOGGER: DebugGymLogger | None = None
 
 
 def configure_pipeline_logging(log_path: Path) -> DebugGymLogger:
-    """Route pipeline logs through a shared Debug-Gym logger writing to ``log_path``."""
+    """Route pipeline logs through a shared logger writing to ``log_path``."""
 
     try:  # pragma: no cover - rich is an optional runtime dependency
         from rich.logging import RichHandler  # type: ignore
@@ -96,7 +96,7 @@ def _normalize_image_identifier(image_name: str) -> str:
 
 
 def extract_repo_commit(image_name: str) -> tuple[str, str]:
-    """Return ``(repo_name, commit_sha)`` derived from a Debug-Gym image name."""
+    """Return ``(repo_name, commit_sha)`` derived from a SWE-smith image name."""
 
     normalized = _normalize_image_identifier(image_name)
     parts = normalized.split(".")
@@ -240,7 +240,7 @@ def _base_progress_entry(
 
 
 def locate_image_folder(logdir: Path, repo_name: str, commit_sha: str) -> Path | None:
-    """Return the Debug-Gym output folder that matches the repo/commit."""
+    """Return the output folder that matches the repo/commit."""
 
     if not logdir.exists():
         return None
@@ -258,7 +258,7 @@ def _extract_agent_metadata(
     commit_sha: str,
     seed: str,
 ) -> tuple[str | None, str | None, Path | None]:
-    """Locate Debug-Gym outputs (patch + agent UUID) for an existing run."""
+    """Locate outputs (patch + agent UUID) for an existing run."""
 
     image_folder = locate_image_folder(logdir, repo_name, commit_sha)
     if image_folder is None:

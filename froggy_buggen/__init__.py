@@ -1,4 +1,4 @@
-"""Debug-Gym bug generation utilities."""
+"""Froggy bug generation utilities."""
 
 from .pipeline import regular  # re-export for convenience
 

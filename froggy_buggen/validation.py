@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover - defensive fallback
             return repo, tag
         return ref, None
 
-try:  # SWE-smith is installed alongside Debug-Gym in bug-gen pipeline
+try:  # SWE-smith is installed alongside debug_gym in bug-gen pipeline
     from swesmith.harness import utils as _swesmith_utils
     from swesmith.harness import valid as _swesmith_valid
     from swesmith.harness.grading import get_valid_report

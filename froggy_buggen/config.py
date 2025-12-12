@@ -1,4 +1,4 @@
-"""Configuration loading utilities for the Debug-Gym bug generation pipeline."""
+"""Configuration loading utilities for the Froggy bug generation pipeline."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ import yaml
 logger = logging.getLogger(__name__)
 
 CUR_DIR = Path(__file__).parent
-DEFAULT_CONFIG_PATH = CUR_DIR / "debug_gym_buggen.yaml"
+DEFAULT_CONFIG_PATH = CUR_DIR / "froggy_buggen.yaml"
 
 
 @dataclass(frozen=True)
-class DebugGymSessionConfig:
+class FroggySessionConfig:
     """Runtime configuration for FreeEnv, FroggyAgent, and supporting tools."""
 
     llm_name: str | None
@@ -59,12 +59,12 @@ def _resolve_path(base: Path, maybe_path: str | None) -> str | None:
 
 def load_pipeline_config(
     config_path: str | Path | None,
-) -> tuple[DebugGymSessionConfig, BuggenRuntimeConfig]:
+) -> tuple[FroggySessionConfig, BuggenRuntimeConfig]:
     """Load environment, agent, and runtime parameters from YAML configuration."""
 
     cfg_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
-        raise FileNotFoundError(f"Debug-Gym buggen config not found: {cfg_path}")
+        raise FileNotFoundError(f"Froggy buggen config not found: {cfg_path}")
 
     config_data = yaml.safe_load(cfg_path.read_text()) or {}
 
@@ -293,7 +293,7 @@ def load_pipeline_config(
     if not 0 < max_fail_fraction <= 1:
         raise ValueError("run.max_fail_fraction must be between 0 and 1 (inclusive of 1)")
 
-    session_config = DebugGymSessionConfig(
+    session_config = FroggySessionConfig(
         llm_name=llm_name,
         tools=tools,
         env_terminal=terminal,
